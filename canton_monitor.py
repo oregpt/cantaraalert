@@ -94,13 +94,17 @@ def check_and_alert(metrics: dict) -> bool:
     """Check if Est.Traffic > Gross and send alert if so"""
     alerts = []
 
+    # Only check these periods (exclude 24-Hour Average)
+    check_periods = ['Latest Round', '1-Hour Average']
+
     print("\n--- Current Values ---")
     for period, values in metrics.items():
         est = values.get("est_traffic")
         gross = values.get("gross")
         print(f"{period}: Gross={gross} CC, Est.Traffic={est} CC")
 
-        if est is not None and gross is not None:
+        # Only alert for Latest Round and 1-Hour Average
+        if period in check_periods and est is not None and gross is not None:
             if est > gross:
                 diff = est - gross
                 alerts.append(f"{period}: Est.Traffic ({est}) > Gross ({gross}) by {diff:.2f} CC")
