@@ -7,7 +7,7 @@ import time
 import schedule
 from canton_monitor import run_check
 
-CHECK_INTERVAL_MINUTES = 10
+CHECK_INTERVAL_MINUTES = 15
 
 
 def job():
