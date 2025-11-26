@@ -24,6 +24,14 @@ if __name__ == "__main__":
     print(f"Canton Rewards Monitor starting...")
     print(f"Checking every {CHECK_INTERVAL_MINUTES} minutes")
 
+    # Send startup notification
+    from canton_monitor import send_pushover
+    send_pushover(
+        title="Canton Monitor Started",
+        message=f"Running on Railway. Checking every {CHECK_INTERVAL_MINUTES} mins.",
+        priority=0
+    )
+
     # Run immediately on start
     job()
 
