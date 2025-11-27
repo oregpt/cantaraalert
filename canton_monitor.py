@@ -138,13 +138,16 @@ def extract_cc_value(text: str) -> float:
 
 def init_db():
     """Create tables if they don't exist (safe to call multiple times)"""
+    print(f"init_db() called, DB_ENABLED={DB_ENABLED}", flush=True)
     if not DB_ENABLED:
+        print("DB not enabled, skipping init", flush=True)
         return
 
     try:
         import psycopg2
-
+        print("Connecting to database...", flush=True)
         conn = psycopg2.connect(DATABASE_URL)
+        print("Connected to database", flush=True)
         cur = conn.cursor()
 
         # Create metrics_raw table
@@ -230,10 +233,10 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        print("Database tables initialized")
+        print("Database tables initialized", flush=True)
 
     except Exception as e:
-        print(f"Warning: DB init failed (will retry on next scrape): {e}")
+        print(f"Warning: DB init failed (will retry on next scrape): {e}", flush=True)
 
 
 def store_metrics_to_db(metrics: dict):

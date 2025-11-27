@@ -2,16 +2,35 @@
 Canton Rewards Monitor - Scheduler
 Runs threshold alerts and status reports on independent schedules
 """
+print("=== SCHEDULER STARTING ===", flush=True)
+
+import sys
+print(f"Python version: {sys.version}", flush=True)
 
 import os
+print("Imported os", flush=True)
+
 import time
+print("Imported time", flush=True)
+
 import threading
+print("Imported threading", flush=True)
+
 import schedule
+print("Imported schedule", flush=True)
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
+print("Imported http.server", flush=True)
+
 from dotenv import load_dotenv
+print("Imported dotenv", flush=True)
+
+print("About to import canton_monitor...", flush=True)
 from canton_monitor import run_check, run_status_report, send_notification, init_db
+print("Imported canton_monitor", flush=True)
 
 load_dotenv()
+print("Loaded .env", flush=True)
 
 # Simple health check server to keep Railway happy
 class HealthHandler(BaseHTTPRequestHandler):
@@ -74,16 +93,23 @@ def status_report_job():
 
 
 if __name__ == "__main__":
+    print("=== ENTERED MAIN ===", flush=True)
+
     # Start health check server in background thread
+    print("Starting health check thread...", flush=True)
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
+    print("Health check thread started", flush=True)
 
-    print("Canton Rewards Monitor starting...")
+    print("Canton Rewards Monitor starting...", flush=True)
 
     # Initialize database tables (creates if not exist)
+    print("About to init_db()...", flush=True)
     init_db()
-    print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins")
-    print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins")
+    print("init_db() completed", flush=True)
+
+    print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins", flush=True)
+    print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins", flush=True)
 
     # Build startup message
     config_lines = []
