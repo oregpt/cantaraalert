@@ -267,6 +267,7 @@ def send_status_report(metrics: dict):
             values = metrics[period]
             est = values.get("est_traffic")
             gross = values.get("gross")
+            print(f"DEBUG status report - {period}: gross={gross}, est={est}")
             if est is not None and gross is not None:
                 diff = gross - est
                 status = "⚠️" if est > gross else "✓"
