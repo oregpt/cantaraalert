@@ -103,11 +103,15 @@ def status_report_job():
 
 
 if __name__ == "__main__":
+    print("=== ENTERED MAIN ===", flush=True)
+
     # Start health check server in background thread
+    print("Starting health check thread...", flush=True)
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
+    print("Health check thread started", flush=True)
 
-    print(f"Canton Rewards Monitor starting...")
+    print(f"Canton Rewards Monitor starting...", flush=True)
     print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins")
     print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins")
 
