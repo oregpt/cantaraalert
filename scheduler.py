@@ -97,6 +97,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self.handle_status()
             elif path == "/api/metrics":
                 self.handle_metrics(query)
+            elif path == "/api/metrics_v2":
+                self.handle_metrics_v2(query)
             elif path == "/api/metrics/latest":
                 self.handle_metrics_latest(query)
             elif path == "/api/schema":
@@ -200,6 +202,102 @@ class APIHandler(BaseHTTPRequestHandler):
                     "value4": row[7],
                     "value5": row[8]
                 })
+
+            cur.close()
+            conn.close()
+
+            self.send_json({"count": len(data), "data": data})
+
+        except Exception as e:
+            self.send_error_json(f"Database query failed: {str(e)}", 500)
+
+    def handle_metrics_v2(self, query):
+        """GET /api/metrics_v2 - Query historical data with schema-mapped column names"""
+        if not DB_ENABLED:
+            self.send_error_json("Database not configured", 503)
+            return
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # First, load all schema definitions into a lookup dict
+            cur.execute("""
+                SELECT source, type,
+                       value1_name, value2_name, value3_name, value4_name, value5_name,
+                       value6_name, value7_name, value8_name, value9_name, value10_name,
+                       value11_name, value12_name, value13_name, value14_name, value15_name,
+                       value16_name, value17_name, value18_name, value19_name, value20_name
+                FROM metrics_schema
+            """)
+            schema_rows = cur.fetchall()
+
+            # Build schema lookup: (source, type) -> {value1: name, value2: name, ...}
+            schema_lookup = {}
+            for row in schema_rows:
+                key = (row[0], row[1])
+                schema_lookup[key] = {}
+                for i in range(2, 22):  # value1_name through value20_name
+                    if row[i]:
+                        schema_lookup[key][f"value{i-1}"] = row[i]
+
+            # Build query with filters (same as handle_metrics)
+            sql = """SELECT id, obtained_timestamp, source, type,
+                            value1, value2, value3, value4, value5,
+                            value6, value7, value8, value9, value10,
+                            value11, value12, value13, value14, value15,
+                            value16, value17, value18, value19, value20
+                     FROM metrics_raw WHERE 1=1"""
+            params = []
+
+            if "source" in query:
+                sql += " AND source = %s"
+                params.append(query["source"][0])
+
+            if "type" in query:
+                sql += " AND type = %s"
+                params.append(query["type"][0])
+
+            if "from" in query:
+                sql += " AND obtained_timestamp >= %s"
+                params.append(query["from"][0])
+
+            if "to" in query:
+                sql += " AND obtained_timestamp <= %s"
+                params.append(query["to"][0])
+
+            sql += " ORDER BY obtained_timestamp DESC"
+
+            limit = min(int(query.get("limit", [100])[0]), 1000)
+            sql += f" LIMIT {limit}"
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            data = []
+            for row in rows:
+                source = row[2]
+                type_ = row[3]
+                schema_key = (source, type_)
+                column_names = schema_lookup.get(schema_key, {})
+
+                record = {
+                    "id": row[0],
+                    "obtained_timestamp": row[1].isoformat() if row[1] else None,
+                    "source": source,
+                    "type": type_,
+                    "values": {}
+                }
+
+                # Map value columns using schema names
+                for i in range(20):
+                    value = row[4 + i]  # value1 starts at index 4
+                    if value is not None:
+                        col_key = f"value{i+1}"
+                        col_name = column_names.get(col_key, col_key)  # Use schema name or fallback to valueN
+                        record["values"][col_name] = value
+
+                data.append(record)
 
             cur.close()
             conn.close()
