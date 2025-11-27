@@ -38,7 +38,6 @@ CANTON_URL = "https://canton-rewards.noves.fi/"
 def send_pushover(title: str, message: str, priority: int = 1):
     """Send notification via Pushover"""
     if not PUSHOVER_ENABLED:
-        print("Pushover disabled, skipping")
         return None
 
     response = requests.post(
@@ -61,11 +60,9 @@ def send_pushover(title: str, message: str, priority: int = 1):
 def send_slack(title: str, message: str, exclude_channels: list = None, exclude_users: list = None):
     """Send notification via Slack to all configured channels and users (minus exclusions)"""
     if not SLACK_ENABLED:
-        print("Slack disabled, skipping")
         return []
 
     if not SLACK_BOT_TOKEN:
-        print("Slack bot token not configured")
         return []
 
     exclude_channels = exclude_channels or []
@@ -77,7 +74,6 @@ def send_slack(title: str, message: str, exclude_channels: list = None, exclude_
     targets = channels + users
 
     if not targets:
-        print("No Slack targets after exclusions")
         return []
 
     responses = []
@@ -122,8 +118,6 @@ def send_notification(title: str, message: str, priority: int = 1, alert_type: s
     # Send to Pushover (unless excluded)
     if not exclude_pushover:
         send_pushover(title, message, priority)
-    else:
-        print(f"Pushover excluded for {alert_type}")
 
     # Send to Slack (with exclusions)
     send_slack(title, message, exclude_channels, exclude_users)
@@ -141,27 +135,16 @@ def scrape_canton_rewards():
     """Scrape the Canton Rewards page and extract metrics"""
     print(f"Fetching {CANTON_URL}...")
 
-    try:
-        with sync_playwright() as p:
-            print("Launching browser...")
-            browser = p.chromium.launch(headless=True)
-            print("Browser launched, creating page...")
-            page = browser.new_page()
-            print("Navigating to URL...")
-            page.goto(CANTON_URL, wait_until="networkidle")
-            print("Page loaded, waiting for content...")
-            page.wait_for_timeout(3000)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(CANTON_URL, wait_until="networkidle")
+        page.wait_for_timeout(3000)
 
-            # Get all the card/row elements
-            all_text = page.inner_text("body")
-            print(f"Scraped {len(all_text)} characters")
-            browser.close()
-            print("Browser closed successfully")
+        all_text = page.inner_text("body")
+        browser.close()
 
-        return all_text
-    except Exception as e:
-        print(f"SCRAPE ERROR: {e}")
-        raise
+    return all_text
 
 
 def parse_metrics(raw_text: str) -> dict:
@@ -180,38 +163,22 @@ def parse_metrics(raw_text: str) -> dict:
             if current_section not in results:
                 results[current_section] = {"gross": None, "est_traffic": None}
         elif current_section and current_section in results:
-            # Debug: print raw section content for Latest Round
-            if current_section == 'Latest Round':
-                print(f"DEBUG Latest Round raw content:\n{part[:500]}")
-
             # Look for Gross and Est. Traffic values
             lines = part.split('\n')
-
-            # Debug for Latest Round
-            if current_section == 'Latest Round':
-                print(f"DEBUG Latest Round lines: {lines[:10]}", flush=True)
 
             for i, line in enumerate(lines):
                 line_stripped = line.strip()
                 # Match "Gross" (exact or close)
                 if line_stripped.lower() == 'gross' and i + 1 < len(lines):
-                    next_line = lines[i + 1]
-                    val = extract_cc_value(next_line)
-                    if current_section == 'Latest Round':
-                        print(f"DEBUG Found Gross, next line='{next_line}', extracted val={val}", flush=True)
+                    val = extract_cc_value(lines[i + 1])
                     if val is not None:
                         results[current_section]["gross"] = val
                 # Match "Est. Traffic" or "Est Traffic" (flexible)
                 elif re.match(r'^est\.?\s*traffic$', line_stripped, re.IGNORECASE) and i + 1 < len(lines):
-                    next_line = lines[i + 1]
-                    val = extract_cc_value(next_line)
-                    if current_section == 'Latest Round':
-                        print(f"DEBUG Found Est.Traffic, next line='{next_line}', extracted val={val}", flush=True)
+                    val = extract_cc_value(lines[i + 1])
                     if val is not None:
                         results[current_section]["est_traffic"] = val
 
-    # Debug: print parsed metrics
-    print(f"Parsed metrics: {results}")
     return results
 
 
@@ -280,7 +247,6 @@ def send_status_report(metrics: dict):
             values = metrics[period]
             est = values.get("est_traffic")
             gross = values.get("gross")
-            print(f"DEBUG status report - {period}: gross={gross}, est={est}")
             if est is not None and gross is not None:
                 diff = gross - est
                 status = "⚠️" if est > gross else "✓"
@@ -295,7 +261,7 @@ def send_status_report(metrics: dict):
         send_notification(
             title="Canton Status Report",
             message=message,
-            priority=0,  # Low priority for status reports
+            priority=0,
             alert_type="alert2"
         )
     else:
