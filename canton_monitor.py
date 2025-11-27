@@ -176,7 +176,9 @@ def parse_metrics(raw_text: str) -> dict:
         part = part.strip()
         if part in ['Latest Round', '1-Hour Average', '24-Hour Average']:
             current_section = part
-            results[current_section] = {"gross": None, "est_traffic": None}
+            # Only initialize if not already set (avoid overwriting with second occurrence)
+            if current_section not in results:
+                results[current_section] = {"gross": None, "est_traffic": None}
         elif current_section and current_section in results:
             # Debug: print raw section content for Latest Round
             if current_section == 'Latest Round':
