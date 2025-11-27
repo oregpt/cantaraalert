@@ -141,17 +141,27 @@ def scrape_canton_rewards():
     """Scrape the Canton Rewards page and extract metrics"""
     print(f"Fetching {CANTON_URL}...")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(CANTON_URL, wait_until="networkidle")
-        page.wait_for_timeout(3000)
+    try:
+        with sync_playwright() as p:
+            print("Launching browser...")
+            browser = p.chromium.launch(headless=True)
+            print("Browser launched, creating page...")
+            page = browser.new_page()
+            print("Navigating to URL...")
+            page.goto(CANTON_URL, wait_until="networkidle")
+            print("Page loaded, waiting for content...")
+            page.wait_for_timeout(3000)
 
-        # Get all the card/row elements
-        all_text = page.inner_text("body")
-        browser.close()
+            # Get all the card/row elements
+            all_text = page.inner_text("body")
+            print(f"Scraped {len(all_text)} characters")
+            browser.close()
+            print("Browser closed successfully")
 
-    return all_text
+        return all_text
+    except Exception as e:
+        print(f"SCRAPE ERROR: {e}")
+        raise
 
 
 def parse_metrics(raw_text: str) -> dict:
