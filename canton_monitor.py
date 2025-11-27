@@ -181,6 +181,8 @@ def parse_metrics(raw_text: str) -> dict:
                     if val is not None:
                         results[current_section]["est_traffic"] = val
 
+    # Debug: print parsed metrics
+    print(f"Parsed metrics: {results}")
     return results
 
 
