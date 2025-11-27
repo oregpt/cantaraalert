@@ -9,7 +9,7 @@ import threading
 import schedule
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
-from canton_monitor import run_check, run_status_report, send_notification
+from canton_monitor import run_check, run_status_report, send_notification, init_db
 
 load_dotenv()
 
@@ -79,6 +79,9 @@ if __name__ == "__main__":
     health_thread.start()
 
     print("Canton Rewards Monitor starting...")
+
+    # Initialize database tables (creates if not exist)
+    init_db()
     print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins")
     print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins")
 

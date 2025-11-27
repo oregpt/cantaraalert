@@ -5,11 +5,16 @@ Checks if Est.Traffic > Gross and sends notifications via Pushover and Slack
 
 import os
 import re
+from datetime import datetime, timezone
 import requests
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Database config (optional - if not set, skips DB storage)
+DATABASE_URL = os.getenv("DATABASE_URL")
+DB_ENABLED = DATABASE_URL is not None
 
 # Pushover config
 PUSHOVER_ENABLED = os.getenv("PUSHOVER_ENABLED", "true").lower() == "true"
@@ -129,6 +134,158 @@ def extract_cc_value(text: str) -> float:
     if match:
         return float(match.group(1))
     return None
+
+
+def init_db():
+    """Create tables if they don't exist (safe to call multiple times)"""
+    if not DB_ENABLED:
+        return
+
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+
+        # Create metrics_raw table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS metrics_raw (
+                id SERIAL PRIMARY KEY,
+                obtained_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                source VARCHAR(255) NOT NULL,
+                type VARCHAR(255) NOT NULL,
+                value1 VARCHAR(500),
+                value2 VARCHAR(500),
+                value3 VARCHAR(500),
+                value4 VARCHAR(500),
+                value5 VARCHAR(500),
+                value6 VARCHAR(500),
+                value7 VARCHAR(500),
+                value8 VARCHAR(500),
+                value9 VARCHAR(500),
+                value10 VARCHAR(500),
+                value11 VARCHAR(500),
+                value12 VARCHAR(500),
+                value13 VARCHAR(500),
+                value14 VARCHAR(500),
+                value15 VARCHAR(500),
+                value16 VARCHAR(500),
+                value17 VARCHAR(500),
+                value18 VARCHAR(500),
+                value19 VARCHAR(500),
+                value20 VARCHAR(500)
+            )
+        """)
+
+        # Create indexes if they don't exist
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metrics_raw_source_type
+            ON metrics_raw(source, type)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metrics_raw_timestamp
+            ON metrics_raw(obtained_timestamp)
+        """)
+
+        # Create metrics_schema table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS metrics_schema (
+                id SERIAL PRIMARY KEY,
+                source VARCHAR(255) NOT NULL,
+                type VARCHAR(255) NOT NULL,
+                value1_name VARCHAR(255),
+                value2_name VARCHAR(255),
+                value3_name VARCHAR(255),
+                value4_name VARCHAR(255),
+                value5_name VARCHAR(255),
+                value6_name VARCHAR(255),
+                value7_name VARCHAR(255),
+                value8_name VARCHAR(255),
+                value9_name VARCHAR(255),
+                value10_name VARCHAR(255),
+                value11_name VARCHAR(255),
+                value12_name VARCHAR(255),
+                value13_name VARCHAR(255),
+                value14_name VARCHAR(255),
+                value15_name VARCHAR(255),
+                value16_name VARCHAR(255),
+                value17_name VARCHAR(255),
+                value18_name VARCHAR(255),
+                value19_name VARCHAR(255),
+                value20_name VARCHAR(255),
+                UNIQUE(source, type)
+            )
+        """)
+
+        # Insert Canton schema definitions (ignore if already exist)
+        cur.execute("""
+            INSERT INTO metrics_schema (source, type, value1_name, value2_name)
+            VALUES
+                ('canton-rewards.noves.fi', 'EstEarning_latest_round', 'gross_cc', 'est_traffic_cc'),
+                ('canton-rewards.noves.fi', 'EstEarning_1hr_avg', 'gross_cc', 'est_traffic_cc'),
+                ('canton-rewards.noves.fi', 'EstEarning_24hr_avg', 'gross_cc', 'est_traffic_cc')
+            ON CONFLICT (source, type) DO NOTHING
+        """)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Database tables initialized")
+
+    except Exception as e:
+        print(f"Warning: DB init failed (will retry on next scrape): {e}")
+
+
+def store_metrics_to_db(metrics: dict):
+    """Store scraped metrics to database (fire-and-forget, won't break alerting)"""
+    if not DB_ENABLED:
+        return
+
+    try:
+        import psycopg2
+
+        # Map period names to DB type names
+        type_mapping = {
+            'Latest Round': 'EstEarning_latest_round',
+            '1-Hour Average': 'EstEarning_1hr_avg',
+            '24-Hour Average': 'EstEarning_24hr_avg'
+        }
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+
+        obtained_ts = datetime.now(timezone.utc)
+        source = 'canton-rewards.noves.fi'
+
+        for period, values in metrics.items():
+            db_type = type_mapping.get(period)
+            if not db_type:
+                continue
+
+            gross = values.get("gross")
+            est_traffic = values.get("est_traffic")
+
+            # Only store if we have at least one value
+            if gross is not None or est_traffic is not None:
+                cur.execute("""
+                    INSERT INTO metrics_raw (obtained_timestamp, source, type, value1, value2)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    obtained_ts,
+                    source,
+                    db_type,
+                    str(gross) if gross is not None else None,
+                    str(est_traffic) if est_traffic is not None else None
+                ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"Stored {len(metrics)} metrics to database")
+
+    except Exception as e:
+        # Fire-and-forget - log warning but don't break alerting
+        print(f"Warning: DB storage failed (alerting continues): {e}")
 
 
 def scrape_canton_rewards():
@@ -272,6 +429,7 @@ def run_status_report():
     """Run a status report (Alert 2)"""
     raw_text = scrape_canton_rewards()
     metrics = parse_metrics(raw_text)
+    store_metrics_to_db(metrics)  # Fire-and-forget DB storage
     send_status_report(metrics)
 
 
@@ -288,6 +446,7 @@ def run_check(is_startup: bool = False):
     """Main check function"""
     raw_text = scrape_canton_rewards()
     metrics = parse_metrics(raw_text)
+    store_metrics_to_db(metrics)  # Fire-and-forget DB storage
     return check_and_alert(metrics, is_startup=is_startup)
 
 
