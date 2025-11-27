@@ -112,6 +112,7 @@ if __name__ == "__main__":
     print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins", flush=True)
 
     # Build startup message
+    print("Building startup message...", flush=True)
     config_lines = []
     if ALERT1_ENABLED:
         config_lines.append(f"• Threshold alerts: every {ALERT1_INTERVAL_MINUTES} mins")
@@ -120,22 +121,25 @@ if __name__ == "__main__":
     if not config_lines:
         config_lines.append("• No alerts enabled!")
 
+    print("Sending startup notification...", flush=True)
     send_notification(
         title="Canton Monitor Started",
         message="Running on Railway.\n" + "\n".join(config_lines),
         priority=0
     )
+    print("Startup notification sent", flush=True)
 
     # Run enabled checks immediately on start (with is_startup=True for Alert 1)
     if ALERT1_ENABLED:
-        print(f"\n{'='*50}")
-        print("Running startup threshold check (Alert 1)...")
-        print(f"{'='*50}")
+        print(f"\n{'='*50}", flush=True)
+        print("Running startup threshold check (Alert 1)...", flush=True)
+        print(f"{'='*50}", flush=True)
         try:
             run_check(is_startup=True)
+            print("Alert 1 startup check completed", flush=True)
         except Exception as e:
             error_msg = f"Error during startup threshold check: {e}"
-            print(error_msg)
+            print(error_msg, flush=True)
             send_notification(
                 title="Canton Monitor ERROR",
                 message=error_msg,
@@ -143,16 +147,20 @@ if __name__ == "__main__":
             )
 
     if ALERT2_ENABLED:
+        print("Running Alert 2 status report...", flush=True)
         status_report_job()
+        print("Alert 2 status report completed", flush=True)
 
     # Schedule recurring checks
+    print("Setting up scheduled jobs...", flush=True)
     if ALERT1_ENABLED:
         schedule.every(ALERT1_INTERVAL_MINUTES).minutes.do(threshold_check_job)
 
     if ALERT2_ENABLED:
         schedule.every(ALERT2_INTERVAL_MINUTES).minutes.do(status_report_job)
 
-    print("Scheduler running. Next jobs:", schedule.get_jobs())
+    print("Entering main loop...", flush=True)
+    print(f"Next scheduled jobs: {schedule.get_jobs()}", flush=True)
 
     while True:
         schedule.run_pending()
