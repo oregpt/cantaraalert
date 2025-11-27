@@ -184,16 +184,27 @@ def parse_metrics(raw_text: str) -> dict:
 
             # Look for Gross and Est. Traffic values
             lines = part.split('\n')
+
+            # Debug for Latest Round
+            if current_section == 'Latest Round':
+                print(f"DEBUG Latest Round lines: {lines[:10]}", flush=True)
+
             for i, line in enumerate(lines):
                 line_stripped = line.strip()
                 # Match "Gross" (exact or close)
                 if line_stripped.lower() == 'gross' and i + 1 < len(lines):
-                    val = extract_cc_value(lines[i + 1])
+                    next_line = lines[i + 1]
+                    val = extract_cc_value(next_line)
+                    if current_section == 'Latest Round':
+                        print(f"DEBUG Found Gross, next line='{next_line}', extracted val={val}", flush=True)
                     if val is not None:
                         results[current_section]["gross"] = val
                 # Match "Est. Traffic" or "Est Traffic" (flexible)
                 elif re.match(r'^est\.?\s*traffic$', line_stripped, re.IGNORECASE) and i + 1 < len(lines):
-                    val = extract_cc_value(lines[i + 1])
+                    next_line = lines[i + 1]
+                    val = extract_cc_value(next_line)
+                    if current_section == 'Latest Round':
+                        print(f"DEBUG Found Est.Traffic, next line='{next_line}', extracted val={val}", flush=True)
                     if val is not None:
                         results[current_section]["est_traffic"] = val
 
