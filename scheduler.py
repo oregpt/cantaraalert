@@ -285,17 +285,15 @@ class APIHandler(BaseHTTPRequestHandler):
                     "id": row[0],
                     "obtained_timestamp": row[1].isoformat() if row[1] else None,
                     "source": source,
-                    "type": type_,
-                    "values": {}
+                    "type": type_
                 }
 
-                # Map value columns using schema names
-                for i in range(20):
-                    value = row[4 + i]  # value1 starts at index 4
-                    if value is not None:
-                        col_key = f"value{i+1}"
-                        col_name = column_names.get(col_key, col_key)  # Use schema name or fallback to valueN
-                        record["values"][col_name] = value
+                # Map value columns using schema names (same flat structure as /api/metrics)
+                for i in range(5):  # value1 through value5 (matching /api/metrics output)
+                    value = row[4 + i]
+                    col_key = f"value{i+1}"
+                    col_name = column_names.get(col_key, col_key)  # Use schema name or fallback to valueN
+                    record[col_name] = value
 
                 data.append(record)
 
