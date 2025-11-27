@@ -2,16 +2,35 @@
 Canton Rewards Monitor - Scheduler
 Runs threshold alerts and status reports on independent schedules
 """
+print("=== SCHEDULER STARTING ===", flush=True)
+
+import sys
+print(f"Python version: {sys.version}", flush=True)
 
 import os
+print("Imported os", flush=True)
+
 import time
+print("Imported time", flush=True)
+
 import threading
+print("Imported threading", flush=True)
+
 import schedule
+print("Imported schedule", flush=True)
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
+print("Imported http.server", flush=True)
+
 from dotenv import load_dotenv
+print("Imported dotenv", flush=True)
+
+print("About to import canton_monitor...", flush=True)
 from canton_monitor import run_check, run_status_report, send_notification
+print("Imported canton_monitor", flush=True)
 
 load_dotenv()
+print("Loaded .env", flush=True)
 
 # Simple health check server to keep Railway happy
 class HealthHandler(BaseHTTPRequestHandler):
