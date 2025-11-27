@@ -203,7 +203,7 @@ def check_and_alert(metrics: dict, is_startup: bool = False) -> bool:
 
         # Only alert for Latest Round and 1-Hour Average
         if period in check_periods and est is not None and gross is not None:
-            diff = est - gross
+            diff = gross - est
             if est > gross:
                 alerts.append(f"⚠️ {period}: Est.Traffic ({est}) > Gross ({gross}) by {diff:.2f} CC")
             else:
@@ -250,7 +250,7 @@ def send_status_report(metrics: dict):
             est = values.get("est_traffic")
             gross = values.get("gross")
             if est is not None and gross is not None:
-                diff = est - gross
+                diff = gross - est
                 status = "⚠️" if est > gross else "✓"
                 lines.append(f"{status} {period}:")
                 lines.append(f"   Gross: {gross} CC")
