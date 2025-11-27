@@ -19,20 +19,33 @@ from canton_monitor import (
 
 load_dotenv()
 
-# API Key for authentication (optional - if not set, API endpoints are disabled)
-API_KEY = os.getenv("API_KEY")
-API_ENABLED = API_KEY is not None
-
-
 def verify_api_key(headers):
-    """Check if request has valid API key"""
-    if not API_ENABLED:
+    """Check if request has valid API key (validates against DB)"""
+    if not DB_ENABLED:
         return False
+
+    # Get key from header
+    key = None
     auth_header = headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        return auth_header[7:] == API_KEY
-    # Also check X-API-Key header
-    return headers.get("X-API-Key", "") == API_KEY
+        key = auth_header[7:]
+    else:
+        key = headers.get("X-API-Key", "")
+
+    if not key:
+        return False
+
+    # Validate against database
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM api_keys WHERE key = %s", (key,))
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
 
 
 def get_db_connection():
@@ -72,8 +85,8 @@ class APIHandler(BaseHTTPRequestHandler):
 
         # All /api/* endpoints require auth
         if path.startswith("/api/"):
-            if not API_ENABLED:
-                self.send_error_json("API not enabled (API_KEY not configured)", 503)
+            if not DB_ENABLED:
+                self.send_error_json("API not enabled (DATABASE_URL not configured)", 503)
                 return
             if not verify_api_key(self.headers):
                 self.send_error_json("Unauthorized - valid API key required", 401)
@@ -88,6 +101,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self.handle_metrics_latest(query)
             elif path == "/api/schema":
                 self.handle_schema(query)
+            elif path == "/api/keys":
+                self.handle_keys(query)
             else:
                 self.send_error_json("Not found", 404)
             return
@@ -282,6 +297,40 @@ class APIHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_error_json(f"Database query failed: {str(e)}", 500)
 
+    def handle_keys(self, query):
+        """GET /api/keys - List all API keys (for admin to distribute)"""
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            limit = min(int(query.get("limit", [100])[0]), 100)
+            offset = int(query.get("offset", [0])[0])
+
+            cur.execute(
+                "SELECT id, key, created_at FROM api_keys ORDER BY id LIMIT %s OFFSET %s",
+                (limit, offset)
+            )
+            rows = cur.fetchall()
+
+            cur.execute("SELECT COUNT(*) FROM api_keys")
+            total = cur.fetchone()[0]
+
+            data = []
+            for row in rows:
+                data.append({
+                    "id": row[0],
+                    "key": row[1],
+                    "created_at": row[2].isoformat() if row[2] else None
+                })
+
+            cur.close()
+            conn.close()
+
+            self.send_json({"total": total, "count": len(data), "data": data})
+
+        except Exception as e:
+            self.send_error_json(f"Database query failed: {str(e)}", 500)
+
     def log_message(self, format, *args):
         # Only log API calls, not health checks
         if "/api/" in (args[0] if args else ""):
@@ -293,10 +342,10 @@ def start_api_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), APIHandler)
     print(f"API server running on port {port}")
-    if API_ENABLED:
-        print("API endpoints enabled (API_KEY configured)")
+    if DB_ENABLED:
+        print("API endpoints enabled (keys stored in database)")
     else:
-        print("API endpoints disabled (set API_KEY to enable)")
+        print("API endpoints disabled (DATABASE_URL not configured)")
     server.serve_forever()
 
 # Alert 1: Threshold alerts (Est.Traffic > Gross)

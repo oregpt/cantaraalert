@@ -232,6 +232,25 @@ def init_db(max_retries: int = 5, retry_delay: int = 3):
                 ON CONFLICT (source, type) DO NOTHING
             """)
 
+            # Create api_keys table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id SERIAL PRIMARY KEY,
+                    key VARCHAR(64) UNIQUE NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+
+            # Generate 100 API keys if table is empty
+            cur.execute("SELECT COUNT(*) FROM api_keys")
+            key_count = cur.fetchone()[0]
+            if key_count == 0:
+                import secrets
+                keys = [secrets.token_urlsafe(32) for _ in range(100)]
+                for key in keys:
+                    cur.execute("INSERT INTO api_keys (key) VALUES (%s)", (key,))
+                print(f"Generated {len(keys)} API keys")
+
             conn.commit()
             cur.close()
             conn.close()
