@@ -136,107 +136,119 @@ def extract_cc_value(text: str) -> float:
     return None
 
 
-def init_db():
-    """Create tables if they don't exist (safe to call multiple times)"""
-    print(f"init_db() called, DB_ENABLED={DB_ENABLED}", flush=True)
+def init_db(max_retries: int = 5, retry_delay: int = 3):
+    """Create tables if they don't exist (safe to call multiple times)
+
+    Retries connection if DB isn't ready yet (common on Railway cold starts)
+    """
     if not DB_ENABLED:
-        print("DB not enabled, skipping init", flush=True)
         return
 
-    try:
-        import psycopg2
-        print("Connecting to database...", flush=True)
-        conn = psycopg2.connect(DATABASE_URL)
-        print("Connected to database", flush=True)
-        cur = conn.cursor()
+    import psycopg2
+    import time as time_module
 
-        # Create metrics_raw table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS metrics_raw (
-                id SERIAL PRIMARY KEY,
-                obtained_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                source VARCHAR(255) NOT NULL,
-                type VARCHAR(255) NOT NULL,
-                value1 VARCHAR(500),
-                value2 VARCHAR(500),
-                value3 VARCHAR(500),
-                value4 VARCHAR(500),
-                value5 VARCHAR(500),
-                value6 VARCHAR(500),
-                value7 VARCHAR(500),
-                value8 VARCHAR(500),
-                value9 VARCHAR(500),
-                value10 VARCHAR(500),
-                value11 VARCHAR(500),
-                value12 VARCHAR(500),
-                value13 VARCHAR(500),
-                value14 VARCHAR(500),
-                value15 VARCHAR(500),
-                value16 VARCHAR(500),
-                value17 VARCHAR(500),
-                value18 VARCHAR(500),
-                value19 VARCHAR(500),
-                value20 VARCHAR(500)
-            )
-        """)
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cur = conn.cursor()
 
-        # Create indexes if they don't exist
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_metrics_raw_source_type
-            ON metrics_raw(source, type)
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_metrics_raw_timestamp
-            ON metrics_raw(obtained_timestamp)
-        """)
+            # Create metrics_raw table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS metrics_raw (
+                    id SERIAL PRIMARY KEY,
+                    obtained_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    source VARCHAR(255) NOT NULL,
+                    type VARCHAR(255) NOT NULL,
+                    value1 VARCHAR(500),
+                    value2 VARCHAR(500),
+                    value3 VARCHAR(500),
+                    value4 VARCHAR(500),
+                    value5 VARCHAR(500),
+                    value6 VARCHAR(500),
+                    value7 VARCHAR(500),
+                    value8 VARCHAR(500),
+                    value9 VARCHAR(500),
+                    value10 VARCHAR(500),
+                    value11 VARCHAR(500),
+                    value12 VARCHAR(500),
+                    value13 VARCHAR(500),
+                    value14 VARCHAR(500),
+                    value15 VARCHAR(500),
+                    value16 VARCHAR(500),
+                    value17 VARCHAR(500),
+                    value18 VARCHAR(500),
+                    value19 VARCHAR(500),
+                    value20 VARCHAR(500)
+                )
+            """)
 
-        # Create metrics_schema table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS metrics_schema (
-                id SERIAL PRIMARY KEY,
-                source VARCHAR(255) NOT NULL,
-                type VARCHAR(255) NOT NULL,
-                value1_name VARCHAR(255),
-                value2_name VARCHAR(255),
-                value3_name VARCHAR(255),
-                value4_name VARCHAR(255),
-                value5_name VARCHAR(255),
-                value6_name VARCHAR(255),
-                value7_name VARCHAR(255),
-                value8_name VARCHAR(255),
-                value9_name VARCHAR(255),
-                value10_name VARCHAR(255),
-                value11_name VARCHAR(255),
-                value12_name VARCHAR(255),
-                value13_name VARCHAR(255),
-                value14_name VARCHAR(255),
-                value15_name VARCHAR(255),
-                value16_name VARCHAR(255),
-                value17_name VARCHAR(255),
-                value18_name VARCHAR(255),
-                value19_name VARCHAR(255),
-                value20_name VARCHAR(255),
-                UNIQUE(source, type)
-            )
-        """)
+            # Create indexes if they don't exist
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metrics_raw_source_type
+                ON metrics_raw(source, type)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metrics_raw_timestamp
+                ON metrics_raw(obtained_timestamp)
+            """)
 
-        # Insert Canton schema definitions (ignore if already exist)
-        cur.execute("""
-            INSERT INTO metrics_schema (source, type, value1_name, value2_name)
-            VALUES
-                ('canton-rewards.noves.fi', 'EstEarning_latest_round', 'gross_cc', 'est_traffic_cc'),
-                ('canton-rewards.noves.fi', 'EstEarning_1hr_avg', 'gross_cc', 'est_traffic_cc'),
-                ('canton-rewards.noves.fi', 'EstEarning_24hr_avg', 'gross_cc', 'est_traffic_cc')
-            ON CONFLICT (source, type) DO NOTHING
-        """)
+            # Create metrics_schema table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS metrics_schema (
+                    id SERIAL PRIMARY KEY,
+                    source VARCHAR(255) NOT NULL,
+                    type VARCHAR(255) NOT NULL,
+                    value1_name VARCHAR(255),
+                    value2_name VARCHAR(255),
+                    value3_name VARCHAR(255),
+                    value4_name VARCHAR(255),
+                    value5_name VARCHAR(255),
+                    value6_name VARCHAR(255),
+                    value7_name VARCHAR(255),
+                    value8_name VARCHAR(255),
+                    value9_name VARCHAR(255),
+                    value10_name VARCHAR(255),
+                    value11_name VARCHAR(255),
+                    value12_name VARCHAR(255),
+                    value13_name VARCHAR(255),
+                    value14_name VARCHAR(255),
+                    value15_name VARCHAR(255),
+                    value16_name VARCHAR(255),
+                    value17_name VARCHAR(255),
+                    value18_name VARCHAR(255),
+                    value19_name VARCHAR(255),
+                    value20_name VARCHAR(255),
+                    UNIQUE(source, type)
+                )
+            """)
 
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("Database tables initialized", flush=True)
+            # Insert Canton schema definitions (ignore if already exist)
+            cur.execute("""
+                INSERT INTO metrics_schema (source, type, value1_name, value2_name)
+                VALUES
+                    ('canton-rewards.noves.fi', 'EstEarning_latest_round', 'gross_cc', 'est_traffic_cc'),
+                    ('canton-rewards.noves.fi', 'EstEarning_1hr_avg', 'gross_cc', 'est_traffic_cc'),
+                    ('canton-rewards.noves.fi', 'EstEarning_24hr_avg', 'gross_cc', 'est_traffic_cc')
+                ON CONFLICT (source, type) DO NOTHING
+            """)
 
-    except Exception as e:
-        print(f"Warning: DB init failed (will retry on next scrape): {e}", flush=True)
+            conn.commit()
+            cur.close()
+            conn.close()
+            print("Database tables initialized")
+            return  # Success, exit the retry loop
+
+        except psycopg2.OperationalError as e:
+            # Connection failed - DB might not be ready yet
+            if attempt < max_retries - 1:
+                print(f"DB connection failed (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                time_module.sleep(retry_delay)
+            else:
+                print(f"Warning: DB init failed after {max_retries} attempts: {e}")
+
+        except Exception as e:
+            print(f"Warning: DB init failed: {e}")
+            return  # Non-connection error, don't retry
 
 
 def store_metrics_to_db(metrics: dict):
