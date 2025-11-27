@@ -32,6 +32,8 @@ print("Imported canton_monitor", flush=True)
 load_dotenv()
 print("Loaded .env", flush=True)
 
+print("Defining HealthHandler class...", flush=True)
+
 # Simple health check server to keep Railway happy
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -43,19 +45,27 @@ class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Suppress logging
 
+print("HealthHandler class defined", flush=True)
+
 def start_health_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthHandler)
     print(f"Health check server running on port {port}")
     server.serve_forever()
 
+print("Loading config from env...", flush=True)
+
 # Alert 1: Threshold alerts (Est.Traffic > Gross)
 ALERT1_ENABLED = os.getenv("ALERT1_ENABLED", "true").lower() == "true"
 ALERT1_INTERVAL_MINUTES = int(os.getenv("ALERT1_INTERVAL_MINUTES", "15"))
+print(f"Alert1: enabled={ALERT1_ENABLED}, interval={ALERT1_INTERVAL_MINUTES}", flush=True)
 
 # Alert 2: Status reports (all values)
 ALERT2_ENABLED = os.getenv("ALERT2_ENABLED", "true").lower() == "true"
 ALERT2_INTERVAL_MINUTES = int(os.getenv("ALERT2_INTERVAL_MINUTES", "60"))
+print(f"Alert2: enabled={ALERT2_ENABLED}, interval={ALERT2_INTERVAL_MINUTES}", flush=True)
+
+print("Config loaded, entering main...", flush=True)
 
 
 def threshold_check_job():
