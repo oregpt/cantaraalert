@@ -168,6 +168,10 @@ def parse_metrics(raw_text: str) -> dict:
             current_section = part
             results[current_section] = {"gross": None, "est_traffic": None}
         elif current_section and current_section in results:
+            # Debug: print raw section content for Latest Round
+            if current_section == 'Latest Round':
+                print(f"DEBUG Latest Round raw content:\n{part[:500]}")
+
             # Look for Gross and Est. Traffic values
             lines = part.split('\n')
             for i, line in enumerate(lines):
