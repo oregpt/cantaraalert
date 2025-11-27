@@ -100,6 +100,9 @@ if __name__ == "__main__":
     if ALERT2_ENABLED:
         schedule.every(ALERT2_INTERVAL_MINUTES).minutes.do(status_report_job)
 
+    print("Entering main loop - scheduler is running...")
+    print(f"Next scheduled jobs: {schedule.get_jobs()}")
+
     while True:
         schedule.run_pending()
         time.sleep(60)
