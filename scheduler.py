@@ -4,30 +4,299 @@ Runs threshold alerts and status reports on independent schedules
 """
 
 import os
+import json
 import time
 import threading
 import schedule
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from datetime import datetime, timezone
 from dotenv import load_dotenv
-from canton_monitor import run_check, run_status_report, send_notification, init_db
+from canton_monitor import (
+    run_check, run_status_report, send_notification, init_db,
+    scrape_canton_rewards, parse_metrics, DATABASE_URL, DB_ENABLED
+)
 
 load_dotenv()
 
-# Simple health check server to keep Railway happy
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
+# API Key for authentication (optional - if not set, API endpoints are disabled)
+API_KEY = os.getenv("API_KEY")
+API_ENABLED = API_KEY is not None
+
+
+def verify_api_key(headers):
+    """Check if request has valid API key"""
+    if not API_ENABLED:
+        return False
+    auth_header = headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:] == API_KEY
+    # Also check X-API-Key header
+    return headers.get("X-API-Key", "") == API_KEY
+
+
+def get_db_connection():
+    """Get database connection"""
+    if not DB_ENABLED:
+        return None
+    import psycopg2
+    return psycopg2.connect(DATABASE_URL)
+
+
+class APIHandler(BaseHTTPRequestHandler):
+    """HTTP handler for health checks and API endpoints"""
+
+    def send_json(self, data, status=200):
+        """Send JSON response"""
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
         self.end_headers()
-        self.wfile.write(b'OK')
+        self.wfile.write(json.dumps(data).encode())
+
+    def send_error_json(self, message, status=400):
+        """Send JSON error response"""
+        self.send_json({"error": message}, status)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # Health check - no auth required
+        if path == "/" or path == "/health":
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+            return
+
+        # All /api/* endpoints require auth
+        if path.startswith("/api/"):
+            if not API_ENABLED:
+                self.send_error_json("API not enabled (API_KEY not configured)", 503)
+                return
+            if not verify_api_key(self.headers):
+                self.send_error_json("Unauthorized - valid API key required", 401)
+                return
+
+            # Route to appropriate handler
+            if path == "/api/status":
+                self.handle_status()
+            elif path == "/api/metrics":
+                self.handle_metrics(query)
+            elif path == "/api/metrics/latest":
+                self.handle_metrics_latest(query)
+            elif path == "/api/schema":
+                self.handle_schema(query)
+            else:
+                self.send_error_json("Not found", 404)
+            return
+
+        self.send_error_json("Not found", 404)
+
+    def handle_status(self):
+        """GET /api/status - Get current values (live scrape)"""
+        try:
+            raw_text = scrape_canton_rewards()
+            metrics = parse_metrics(raw_text)
+
+            # Format response
+            response = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": "canton-rewards.noves.fi",
+                "metrics": {},
+                "alerts": []
+            }
+
+            type_mapping = {
+                'Latest Round': 'latest_round',
+                '1-Hour Average': '1hr_avg',
+                '24-Hour Average': '24hr_avg'
+            }
+
+            for period, values in metrics.items():
+                key = type_mapping.get(period, period)
+                gross = values.get("gross")
+                est = values.get("est_traffic")
+                response["metrics"][key] = {
+                    "gross_cc": gross,
+                    "est_traffic_cc": est
+                }
+                # Check for alerts
+                if gross is not None and est is not None and est > gross:
+                    response["alerts"].append({
+                        "period": period,
+                        "message": f"Est.Traffic ({est}) > Gross ({gross})"
+                    })
+
+            self.send_json(response)
+
+        except Exception as e:
+            self.send_error_json(f"Failed to get status: {str(e)}", 500)
+
+    def handle_metrics(self, query):
+        """GET /api/metrics - Query historical data from DB"""
+        if not DB_ENABLED:
+            self.send_error_json("Database not configured", 503)
+            return
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # Build query with filters
+            sql = "SELECT id, obtained_timestamp, source, type, value1, value2, value3, value4, value5 FROM metrics_raw WHERE 1=1"
+            params = []
+
+            if "source" in query:
+                sql += " AND source = %s"
+                params.append(query["source"][0])
+
+            if "type" in query:
+                sql += " AND type = %s"
+                params.append(query["type"][0])
+
+            if "from" in query:
+                sql += " AND obtained_timestamp >= %s"
+                params.append(query["from"][0])
+
+            if "to" in query:
+                sql += " AND obtained_timestamp <= %s"
+                params.append(query["to"][0])
+
+            sql += " ORDER BY obtained_timestamp DESC"
+
+            limit = min(int(query.get("limit", [100])[0]), 1000)
+            sql += f" LIMIT {limit}"
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            data = []
+            for row in rows:
+                data.append({
+                    "id": row[0],
+                    "obtained_timestamp": row[1].isoformat() if row[1] else None,
+                    "source": row[2],
+                    "type": row[3],
+                    "value1": row[4],
+                    "value2": row[5],
+                    "value3": row[6],
+                    "value4": row[7],
+                    "value5": row[8]
+                })
+
+            cur.close()
+            conn.close()
+
+            self.send_json({"count": len(data), "data": data})
+
+        except Exception as e:
+            self.send_error_json(f"Database query failed: {str(e)}", 500)
+
+    def handle_metrics_latest(self, query):
+        """GET /api/metrics/latest - Get most recent value for each source/type"""
+        if not DB_ENABLED:
+            self.send_error_json("Database not configured", 503)
+            return
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # Get latest entry for each source/type combo
+            sql = """
+                SELECT DISTINCT ON (source, type)
+                    id, obtained_timestamp, source, type, value1, value2
+                FROM metrics_raw
+                ORDER BY source, type, obtained_timestamp DESC
+            """
+            cur.execute(sql)
+            rows = cur.fetchall()
+
+            data = []
+            for row in rows:
+                data.append({
+                    "id": row[0],
+                    "obtained_timestamp": row[1].isoformat() if row[1] else None,
+                    "source": row[2],
+                    "type": row[3],
+                    "value1": row[4],
+                    "value2": row[5]
+                })
+
+            cur.close()
+            conn.close()
+
+            self.send_json({"count": len(data), "data": data})
+
+        except Exception as e:
+            self.send_error_json(f"Database query failed: {str(e)}", 500)
+
+    def handle_schema(self, query):
+        """GET /api/schema - List all source/type definitions"""
+        if not DB_ENABLED:
+            self.send_error_json("Database not configured", 503)
+            return
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            sql = "SELECT source, type, value1_name, value2_name, value3_name, value4_name, value5_name FROM metrics_schema"
+            params = []
+
+            if "source" in query:
+                sql += " WHERE source = %s"
+                params.append(query["source"][0])
+
+            sql += " ORDER BY source, type"
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            data = []
+            for row in rows:
+                schema = {
+                    "source": row[0],
+                    "type": row[1],
+                    "columns": {}
+                }
+                if row[2]:
+                    schema["columns"]["value1"] = row[2]
+                if row[3]:
+                    schema["columns"]["value2"] = row[3]
+                if row[4]:
+                    schema["columns"]["value3"] = row[4]
+                if row[5]:
+                    schema["columns"]["value4"] = row[5]
+                if row[6]:
+                    schema["columns"]["value5"] = row[6]
+                data.append(schema)
+
+            cur.close()
+            conn.close()
+
+            self.send_json({"count": len(data), "data": data})
+
+        except Exception as e:
+            self.send_error_json(f"Database query failed: {str(e)}", 500)
 
     def log_message(self, format, *args):
-        pass  # Suppress logging
+        # Only log API calls, not health checks
+        if "/api/" in (args[0] if args else ""):
+            print(f"API: {args[0]}")
 
-def start_health_server():
+
+def start_api_server():
+    """Start the HTTP server for health checks and API"""
     port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    print(f"Health check server running on port {port}")
+    server = HTTPServer(('0.0.0.0', port), APIHandler)
+    print(f"API server running on port {port}")
+    if API_ENABLED:
+        print("API endpoints enabled (API_KEY configured)")
+    else:
+        print("API endpoints disabled (set API_KEY to enable)")
     server.serve_forever()
 
 # Alert 1: Threshold alerts (Est.Traffic > Gross)
@@ -74,9 +343,9 @@ def status_report_job():
 
 
 if __name__ == "__main__":
-    # Start health check server in background thread
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
+    # Start API server in background thread (includes health check)
+    api_thread = threading.Thread(target=start_api_server, daemon=True)
+    api_thread.start()
 
     print("Canton Rewards Monitor starting...")
 
