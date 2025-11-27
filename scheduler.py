@@ -5,11 +5,30 @@ Runs threshold alerts and status reports on independent schedules
 
 import os
 import time
+import threading
 import schedule
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from canton_monitor import run_check, run_status_report, send_notification
 
 load_dotenv()
+
+# Simple health check server to keep Railway happy
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+
+    def log_message(self, format, *args):
+        pass  # Suppress logging
+
+def start_health_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"Health check server running on port {port}")
+    server.serve_forever()
 
 # Alert 1: Threshold alerts (Est.Traffic > Gross)
 ALERT1_ENABLED = os.getenv("ALERT1_ENABLED", "true").lower() == "true"
@@ -55,6 +74,10 @@ def status_report_job():
 
 
 if __name__ == "__main__":
+    # Start health check server in background thread
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+
     print(f"Canton Rewards Monitor starting...")
     print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins")
     print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins")
