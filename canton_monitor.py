@@ -562,7 +562,21 @@ def check_est_traffic_change(metrics: dict) -> bool:
             details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
 
     if alerts:
+        # Determine overall direction for narrative
+        first_baseline = None
+        for period in comparison_periods:
+            if period in metrics and metrics[period].get('est_traffic') is not None:
+                first_baseline = metrics[period]['est_traffic']
+                break
+
+        if first_baseline and latest_est > first_baseline:
+            narrative = "Network traffic is spiking - more transactions flowing through."
+        else:
+            narrative = "Network traffic is dropping - fewer transactions flowing through."
+
         message_lines = [
+            narrative,
+            "",
             f"Latest: {latest_est} CC",
             ""
         ] + alerts
@@ -615,7 +629,21 @@ def check_gross_change(metrics: dict) -> bool:
             details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
 
     if alerts:
+        # Determine overall direction for narrative
+        first_baseline = None
+        for period in comparison_periods:
+            if period in metrics and metrics[period].get('gross') is not None:
+                first_baseline = metrics[period]['gross']
+                break
+
+        if first_baseline and latest_gross > first_baseline:
+            narrative = "Gross revenue is up - earning more per round."
+        else:
+            narrative = "Gross revenue is down - earning less per round."
+
         message_lines = [
+            narrative,
+            "",
             f"Latest: {latest_gross} CC",
             ""
         ] + alerts
@@ -673,7 +701,24 @@ def check_diff_change(metrics: dict) -> bool:
             details.append(f"vs {period} ({baseline_diff:+.2f} CC): {direction} {abs(pct_change):.1f}% ✓")
 
     if alerts:
+        # Determine overall direction for narrative
+        first_baseline_diff = None
+        for period in comparison_periods:
+            if period in metrics:
+                bg = metrics[period].get('gross')
+                be = metrics[period].get('est_traffic')
+                if bg is not None and be is not None:
+                    first_baseline_diff = bg - be
+                    break
+
+        if first_baseline_diff is not None and latest_diff > first_baseline_diff:
+            narrative = "Profitability improving - margin between Gross and Traffic is widening."
+        else:
+            narrative = "Profitability declining - margin between Gross and Traffic is shrinking."
+
         message_lines = [
+            narrative,
+            "",
             f"Latest Diff: {latest_diff:+.2f} CC",
             f"(Gross {latest_gross} - Est.Traffic {latest_est})",
             ""
@@ -684,7 +729,7 @@ def check_diff_change(metrics: dict) -> bool:
         message = "\n".join(message_lines)
         print(f"ALERT 5 (Diff Change):\n{message}")
         send_notification(
-            title=f"Canton: Diff Change >{ALERT5_THRESHOLD_PERCENT}%!",
+            title=f"Canton: Profitability Change >{ALERT5_THRESHOLD_PERCENT}%!",
             message=message,
             priority=1,
             alert_type="alert5"
