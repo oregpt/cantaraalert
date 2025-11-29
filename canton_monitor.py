@@ -37,6 +37,30 @@ ALERT2_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT2_EXCLUDE_CHANNELS
 ALERT2_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT2_EXCLUDE_USERS", "").split(",") if u.strip()]
 ALERT2_EXCLUDE_PUSHOVER = os.getenv("ALERT2_EXCLUDE_PUSHOVER", "false").lower() == "true"
 
+# Alert 3 config (Est.Traffic spike/drop)
+ALERT3_ENABLED = os.getenv("ALERT3_ENABLED", "true").lower() == "true"
+ALERT3_THRESHOLD_PERCENT = float(os.getenv("ALERT3_THRESHOLD_PERCENT", "30"))
+ALERT3_COMPARISON_PERIOD = os.getenv("ALERT3_COMPARISON_PERIOD", "1hr").lower()
+ALERT3_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT3_EXCLUDE_CHANNELS", "").split(",") if c.strip()]
+ALERT3_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT3_EXCLUDE_USERS", "").split(",") if u.strip()]
+ALERT3_EXCLUDE_PUSHOVER = os.getenv("ALERT3_EXCLUDE_PUSHOVER", "false").lower() == "true"
+
+# Alert 4 config (Gross spike/drop)
+ALERT4_ENABLED = os.getenv("ALERT4_ENABLED", "true").lower() == "true"
+ALERT4_THRESHOLD_PERCENT = float(os.getenv("ALERT4_THRESHOLD_PERCENT", "30"))
+ALERT4_COMPARISON_PERIOD = os.getenv("ALERT4_COMPARISON_PERIOD", "1hr").lower()
+ALERT4_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT4_EXCLUDE_CHANNELS", "").split(",") if c.strip()]
+ALERT4_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT4_EXCLUDE_USERS", "").split(",") if u.strip()]
+ALERT4_EXCLUDE_PUSHOVER = os.getenv("ALERT4_EXCLUDE_PUSHOVER", "false").lower() == "true"
+
+# Alert 5 config (Diff change - Gross minus Est.Traffic)
+ALERT5_ENABLED = os.getenv("ALERT5_ENABLED", "true").lower() == "true"
+ALERT5_THRESHOLD_PERCENT = float(os.getenv("ALERT5_THRESHOLD_PERCENT", "30"))
+ALERT5_COMPARISON_PERIOD = os.getenv("ALERT5_COMPARISON_PERIOD", "1hr").lower()
+ALERT5_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT5_EXCLUDE_CHANNELS", "").split(",") if c.strip()]
+ALERT5_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT5_EXCLUDE_USERS", "").split(",") if u.strip()]
+ALERT5_EXCLUDE_PUSHOVER = os.getenv("ALERT5_EXCLUDE_PUSHOVER", "false").lower() == "true"
+
 CANTON_URL = "https://canton-rewards.noves.fi/"
 
 
@@ -104,7 +128,9 @@ def send_slack(title: str, message: str, exclude_channels: list = None, exclude_
 def send_notification(title: str, message: str, priority: int = 1, alert_type: str = None):
     """Send notification to all enabled channels (Pushover + Slack) with per-alert exclusions
 
-    alert_type: 'alert1' for threshold alerts, 'alert2' for status reports, None for all
+    alert_type: 'alert1' for threshold alerts, 'alert2' for status reports,
+                'alert3' for Est.Traffic change, 'alert4' for Gross change,
+                'alert5' for Diff change, None for all
     """
     # Determine exclusions based on alert type
     exclude_pushover = False
@@ -119,6 +145,18 @@ def send_notification(title: str, message: str, priority: int = 1, alert_type: s
         exclude_pushover = ALERT2_EXCLUDE_PUSHOVER
         exclude_channels = ALERT2_EXCLUDE_CHANNELS
         exclude_users = ALERT2_EXCLUDE_USERS
+    elif alert_type == "alert3":
+        exclude_pushover = ALERT3_EXCLUDE_PUSHOVER
+        exclude_channels = ALERT3_EXCLUDE_CHANNELS
+        exclude_users = ALERT3_EXCLUDE_USERS
+    elif alert_type == "alert4":
+        exclude_pushover = ALERT4_EXCLUDE_PUSHOVER
+        exclude_channels = ALERT4_EXCLUDE_CHANNELS
+        exclude_users = ALERT4_EXCLUDE_USERS
+    elif alert_type == "alert5":
+        exclude_pushover = ALERT5_EXCLUDE_PUSHOVER
+        exclude_channels = ALERT5_EXCLUDE_CHANNELS
+        exclude_users = ALERT5_EXCLUDE_USERS
 
     # Send to Pushover (unless excluded)
     if not exclude_pushover:
@@ -465,6 +503,209 @@ def run_status_report():
     metrics = parse_metrics(raw_text)
     store_metrics_to_db(metrics)  # Fire-and-forget DB storage
     send_status_report(metrics)
+
+
+def get_comparison_periods(comparison_period: str) -> list:
+    """Get list of periods to compare against based on config value
+
+    comparison_period: '1hr', '24hr', 'both', or 'all'
+    Returns: list of period names like ['1-Hour Average'] or ['1-Hour Average', '24-Hour Average']
+    """
+    period_map = {
+        '1hr': ['1-Hour Average'],
+        '24hr': ['24-Hour Average'],
+        'both': ['1-Hour Average', '24-Hour Average'],
+        'all': ['1-Hour Average', '24-Hour Average']
+    }
+    return period_map.get(comparison_period, ['1-Hour Average'])
+
+
+def calculate_percent_change(current: float, baseline: float) -> float:
+    """Calculate percent change from baseline to current
+
+    Returns positive for increase, negative for decrease
+    """
+    if baseline == 0:
+        return 0.0
+    return ((current - baseline) / abs(baseline)) * 100
+
+
+def check_est_traffic_change(metrics: dict) -> bool:
+    """Alert 3: Check if Est.Traffic changed by threshold % vs comparison period(s)"""
+    if not ALERT3_ENABLED:
+        return False
+
+    latest = metrics.get('Latest Round', {})
+    latest_est = latest.get('est_traffic')
+
+    if latest_est is None:
+        print("Alert 3: No Latest Round Est.Traffic data")
+        return False
+
+    comparison_periods = get_comparison_periods(ALERT3_COMPARISON_PERIOD)
+    alerts = []
+    details = []
+
+    for period in comparison_periods:
+        if period not in metrics:
+            continue
+        baseline_est = metrics[period].get('est_traffic')
+        if baseline_est is None:
+            continue
+
+        pct_change = calculate_percent_change(latest_est, baseline_est)
+        direction = "↑" if pct_change > 0 else "↓"
+
+        if abs(pct_change) >= ALERT3_THRESHOLD_PERCENT:
+            alerts.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ⚠️")
+        else:
+            details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
+
+    if alerts:
+        message_lines = [
+            f"Latest: {latest_est} CC",
+            ""
+        ] + alerts
+        if details:
+            message_lines += [""] + details
+
+        message = "\n".join(message_lines)
+        print(f"ALERT 3 (Est.Traffic Change):\n{message}")
+        send_notification(
+            title=f"Canton: Est.Traffic Change >{ALERT3_THRESHOLD_PERCENT}%!",
+            message=message,
+            priority=1,
+            alert_type="alert3"
+        )
+        return True
+    else:
+        print(f"Alert 3: Est.Traffic within {ALERT3_THRESHOLD_PERCENT}% threshold")
+        return False
+
+
+def check_gross_change(metrics: dict) -> bool:
+    """Alert 4: Check if Gross changed by threshold % vs comparison period(s)"""
+    if not ALERT4_ENABLED:
+        return False
+
+    latest = metrics.get('Latest Round', {})
+    latest_gross = latest.get('gross')
+
+    if latest_gross is None:
+        print("Alert 4: No Latest Round Gross data")
+        return False
+
+    comparison_periods = get_comparison_periods(ALERT4_COMPARISON_PERIOD)
+    alerts = []
+    details = []
+
+    for period in comparison_periods:
+        if period not in metrics:
+            continue
+        baseline_gross = metrics[period].get('gross')
+        if baseline_gross is None:
+            continue
+
+        pct_change = calculate_percent_change(latest_gross, baseline_gross)
+        direction = "↑" if pct_change > 0 else "↓"
+
+        if abs(pct_change) >= ALERT4_THRESHOLD_PERCENT:
+            alerts.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ⚠️")
+        else:
+            details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
+
+    if alerts:
+        message_lines = [
+            f"Latest: {latest_gross} CC",
+            ""
+        ] + alerts
+        if details:
+            message_lines += [""] + details
+
+        message = "\n".join(message_lines)
+        print(f"ALERT 4 (Gross Change):\n{message}")
+        send_notification(
+            title=f"Canton: Gross Change >{ALERT4_THRESHOLD_PERCENT}%!",
+            message=message,
+            priority=1,
+            alert_type="alert4"
+        )
+        return True
+    else:
+        print(f"Alert 4: Gross within {ALERT4_THRESHOLD_PERCENT}% threshold")
+        return False
+
+
+def check_diff_change(metrics: dict) -> bool:
+    """Alert 5: Check if Diff (Gross - Est.Traffic) changed by threshold % vs comparison period(s)"""
+    if not ALERT5_ENABLED:
+        return False
+
+    latest = metrics.get('Latest Round', {})
+    latest_gross = latest.get('gross')
+    latest_est = latest.get('est_traffic')
+
+    if latest_gross is None or latest_est is None:
+        print("Alert 5: No Latest Round data")
+        return False
+
+    latest_diff = latest_gross - latest_est
+
+    comparison_periods = get_comparison_periods(ALERT5_COMPARISON_PERIOD)
+    alerts = []
+    details = []
+
+    for period in comparison_periods:
+        if period not in metrics:
+            continue
+        baseline_gross = metrics[period].get('gross')
+        baseline_est = metrics[period].get('est_traffic')
+        if baseline_gross is None or baseline_est is None:
+            continue
+
+        baseline_diff = baseline_gross - baseline_est
+        pct_change = calculate_percent_change(latest_diff, baseline_diff)
+        direction = "↑" if pct_change > 0 else "↓"
+
+        if abs(pct_change) >= ALERT5_THRESHOLD_PERCENT:
+            alerts.append(f"vs {period} ({baseline_diff:+.2f} CC): {direction} {abs(pct_change):.1f}% ⚠️")
+        else:
+            details.append(f"vs {period} ({baseline_diff:+.2f} CC): {direction} {abs(pct_change):.1f}% ✓")
+
+    if alerts:
+        message_lines = [
+            f"Latest Diff: {latest_diff:+.2f} CC",
+            f"(Gross {latest_gross} - Est.Traffic {latest_est})",
+            ""
+        ] + alerts
+        if details:
+            message_lines += [""] + details
+
+        message = "\n".join(message_lines)
+        print(f"ALERT 5 (Diff Change):\n{message}")
+        send_notification(
+            title=f"Canton: Diff Change >{ALERT5_THRESHOLD_PERCENT}%!",
+            message=message,
+            priority=1,
+            alert_type="alert5"
+        )
+        return True
+    else:
+        print(f"Alert 5: Diff within {ALERT5_THRESHOLD_PERCENT}% threshold")
+        return False
+
+
+def run_change_alerts():
+    """Run Alerts 3, 4, 5 (percentage change alerts)"""
+    raw_text = scrape_canton_rewards()
+    metrics = parse_metrics(raw_text)
+    store_metrics_to_db(metrics)  # Fire-and-forget DB storage
+
+    alert3_triggered = check_est_traffic_change(metrics)
+    alert4_triggered = check_gross_change(metrics)
+    alert5_triggered = check_diff_change(metrics)
+
+    return alert3_triggered or alert4_triggered or alert5_triggered
 
 
 def test_notifications():

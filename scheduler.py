@@ -13,8 +13,11 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from canton_monitor import (
-    run_check, run_status_report, send_notification, init_db,
-    scrape_canton_rewards, parse_metrics, DATABASE_URL, DB_ENABLED
+    run_check, run_status_report, run_change_alerts, send_notification, init_db,
+    scrape_canton_rewards, parse_metrics, DATABASE_URL, DB_ENABLED,
+    ALERT3_ENABLED, ALERT3_THRESHOLD_PERCENT, ALERT3_COMPARISON_PERIOD,
+    ALERT4_ENABLED, ALERT4_THRESHOLD_PERCENT, ALERT4_COMPARISON_PERIOD,
+    ALERT5_ENABLED, ALERT5_THRESHOLD_PERCENT, ALERT5_COMPARISON_PERIOD
 )
 
 load_dotenv()
@@ -452,6 +455,9 @@ ALERT1_INTERVAL_MINUTES = int(os.getenv("ALERT1_INTERVAL_MINUTES", "15"))
 ALERT2_ENABLED = os.getenv("ALERT2_ENABLED", "true").lower() == "true"
 ALERT2_INTERVAL_MINUTES = int(os.getenv("ALERT2_INTERVAL_MINUTES", "60"))
 
+# Alerts 3, 4, 5: Percentage change alerts (share same interval)
+CHANGE_ALERTS_INTERVAL_MINUTES = int(os.getenv("CHANGE_ALERTS_INTERVAL_MINUTES", "15"))
+
 
 def threshold_check_job():
     """Alert 1: Check thresholds and alert if exceeded"""
@@ -487,6 +493,23 @@ def status_report_job():
         )
 
 
+def change_alerts_job():
+    """Alerts 3, 4, 5: Check for percentage changes in Est.Traffic, Gross, and Diff"""
+    print(f"\n{'='*50}")
+    print("Running change alerts (Alerts 3, 4, 5)...")
+    print(f"{'='*50}")
+    try:
+        run_change_alerts()
+    except Exception as e:
+        error_msg = f"Error during change alerts: {e}"
+        print(error_msg)
+        send_notification(
+            title="Canton Monitor ERROR",
+            message=error_msg,
+            priority=1
+        )
+
+
 if __name__ == "__main__":
     # Start API server in background thread (includes health check)
     api_thread = threading.Thread(target=start_api_server, daemon=True)
@@ -499,6 +522,11 @@ if __name__ == "__main__":
 
     print(f"Alert 1 (Threshold): {'ENABLED' if ALERT1_ENABLED else 'DISABLED'} - every {ALERT1_INTERVAL_MINUTES} mins")
     print(f"Alert 2 (Status):    {'ENABLED' if ALERT2_ENABLED else 'DISABLED'} - every {ALERT2_INTERVAL_MINUTES} mins")
+    print(f"Alert 3 (Est.Traffic %): {'ENABLED' if ALERT3_ENABLED else 'DISABLED'} - {ALERT3_THRESHOLD_PERCENT}% threshold, compare vs {ALERT3_COMPARISON_PERIOD}")
+    print(f"Alert 4 (Gross %):       {'ENABLED' if ALERT4_ENABLED else 'DISABLED'} - {ALERT4_THRESHOLD_PERCENT}% threshold, compare vs {ALERT4_COMPARISON_PERIOD}")
+    print(f"Alert 5 (Diff %):        {'ENABLED' if ALERT5_ENABLED else 'DISABLED'} - {ALERT5_THRESHOLD_PERCENT}% threshold, compare vs {ALERT5_COMPARISON_PERIOD}")
+    if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
+        print(f"Change alerts interval: every {CHANGE_ALERTS_INTERVAL_MINUTES} mins")
 
     # Build startup message
     config_lines = []
@@ -506,6 +534,12 @@ if __name__ == "__main__":
         config_lines.append(f"• Threshold alerts: every {ALERT1_INTERVAL_MINUTES} mins")
     if ALERT2_ENABLED:
         config_lines.append(f"• Status reports: every {ALERT2_INTERVAL_MINUTES} mins")
+    if ALERT3_ENABLED:
+        config_lines.append(f"• Est.Traffic change: >{ALERT3_THRESHOLD_PERCENT}% vs {ALERT3_COMPARISON_PERIOD}")
+    if ALERT4_ENABLED:
+        config_lines.append(f"• Gross change: >{ALERT4_THRESHOLD_PERCENT}% vs {ALERT4_COMPARISON_PERIOD}")
+    if ALERT5_ENABLED:
+        config_lines.append(f"• Diff change: >{ALERT5_THRESHOLD_PERCENT}% vs {ALERT5_COMPARISON_PERIOD}")
     if not config_lines:
         config_lines.append("• No alerts enabled!")
 
@@ -534,12 +568,20 @@ if __name__ == "__main__":
     if ALERT2_ENABLED:
         status_report_job()
 
+    # Run change alerts on startup if any are enabled
+    if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
+        change_alerts_job()
+
     # Schedule recurring checks
     if ALERT1_ENABLED:
         schedule.every(ALERT1_INTERVAL_MINUTES).minutes.do(threshold_check_job)
 
     if ALERT2_ENABLED:
         schedule.every(ALERT2_INTERVAL_MINUTES).minutes.do(status_report_job)
+
+    # Schedule change alerts if any are enabled (they share an interval)
+    if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
+        schedule.every(CHANGE_ALERTS_INTERVAL_MINUTES).minutes.do(change_alerts_job)
 
     print("Scheduler running. Next jobs:", schedule.get_jobs())
 
