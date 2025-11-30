@@ -61,6 +61,9 @@ ALERT5_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT5_EXCLUDE_CHANNELS
 ALERT5_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT5_EXCLUDE_USERS", "").split(",") if u.strip()]
 ALERT5_EXCLUDE_PUSHOVER = os.getenv("ALERT5_EXCLUDE_PUSHOVER", "false").lower() == "true"
 
+# State-change mode: only fire alerts on state transitions (reduces noise)
+STATE_CHANGE_MODE = os.getenv("STATE_CHANGE_MODE", "true").lower() == "true"
+
 CANTON_URL = "https://canton-rewards.noves.fi/"
 
 
@@ -270,6 +273,22 @@ def init_db(max_retries: int = 5, retry_delay: int = 3):
                 ON CONFLICT (source, type) DO NOTHING
             """)
 
+            # Create alert_state table for state-change tracking
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS alert_state (
+                    alert_type VARCHAR(50) PRIMARY KEY,
+                    last_state VARCHAR(20) NOT NULL DEFAULT 'normal',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+
+            # Initialize state for alerts 3, 4, 5 if not exists
+            cur.execute("""
+                INSERT INTO alert_state (alert_type, last_state)
+                VALUES ('alert3', 'normal'), ('alert4', 'normal'), ('alert5', 'normal')
+                ON CONFLICT (alert_type) DO NOTHING
+            """)
+
             # Create api_keys table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
@@ -306,6 +325,47 @@ def init_db(max_retries: int = 5, retry_delay: int = 3):
         except Exception as e:
             print(f"Warning: DB init failed: {e}")
             return  # Non-connection error, don't retry
+
+
+def get_alert_state(alert_type: str) -> str:
+    """Get the last state for an alert type from DB. Returns 'normal' if not found."""
+    if not DB_ENABLED:
+        return "normal"
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT last_state FROM alert_state WHERE alert_type = %s", (alert_type,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else "normal"
+    except Exception as e:
+        print(f"Warning: Failed to get alert state: {e}")
+        return "normal"
+
+
+def set_alert_state(alert_type: str, new_state: str):
+    """Update the state for an alert type in DB."""
+    if not DB_ENABLED:
+        return
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO alert_state (alert_type, last_state, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (alert_type) DO UPDATE SET last_state = %s, updated_at = NOW()
+        """, (alert_type, new_state, new_state))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"Alert state updated: {alert_type} -> {new_state}")
+    except Exception as e:
+        print(f"Warning: Failed to set alert state: {e}")
 
 
 def store_metrics_to_db(metrics: dict):
@@ -561,6 +621,15 @@ def check_est_traffic_change(metrics: dict) -> bool:
         else:
             details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
 
+    # Determine current state
+    current_state = "triggered" if alerts else "normal"
+    last_state = get_alert_state("alert3") if STATE_CHANGE_MODE else "normal"
+
+    # State-change mode: only notify on transitions
+    if STATE_CHANGE_MODE and current_state == last_state:
+        print(f"Alert 3: State unchanged ({current_state}), skipping notification")
+        return False
+
     if alerts:
         # Determine overall direction for narrative
         first_baseline = None
@@ -591,9 +660,22 @@ def check_est_traffic_change(metrics: dict) -> bool:
             priority=1,
             alert_type="alert3"
         )
+        set_alert_state("alert3", "triggered")
         return True
     else:
-        print(f"Alert 3: Est.Traffic within {ALERT3_THRESHOLD_PERCENT}% threshold")
+        # Check if returning to benchmark from triggered state
+        if STATE_CHANGE_MODE and last_state == "triggered":
+            message = f"Est.Traffic back within {ALERT3_THRESHOLD_PERCENT}% of benchmark.\n\nLatest: {latest_est} CC"
+            print(f"ALERT 3 RETURNED TO BENCHMARK:\n{message}")
+            send_notification(
+                title="Canton: Est.Traffic Returned to Benchmark",
+                message=message,
+                priority=0,
+                alert_type="alert3"
+            )
+            set_alert_state("alert3", "normal")
+        else:
+            print(f"Alert 3: Est.Traffic within {ALERT3_THRESHOLD_PERCENT}% threshold")
         return False
 
 
@@ -628,6 +710,15 @@ def check_gross_change(metrics: dict) -> bool:
         else:
             details.append(f"vs {period}: {direction} {abs(pct_change):.1f}% ✓")
 
+    # Determine current state
+    current_state = "triggered" if alerts else "normal"
+    last_state = get_alert_state("alert4") if STATE_CHANGE_MODE else "normal"
+
+    # State-change mode: only notify on transitions
+    if STATE_CHANGE_MODE and current_state == last_state:
+        print(f"Alert 4: State unchanged ({current_state}), skipping notification")
+        return False
+
     if alerts:
         # Determine overall direction for narrative
         first_baseline = None
@@ -658,9 +749,22 @@ def check_gross_change(metrics: dict) -> bool:
             priority=1,
             alert_type="alert4"
         )
+        set_alert_state("alert4", "triggered")
         return True
     else:
-        print(f"Alert 4: Gross within {ALERT4_THRESHOLD_PERCENT}% threshold")
+        # Check if returning to benchmark from triggered state
+        if STATE_CHANGE_MODE and last_state == "triggered":
+            message = f"Gross back within {ALERT4_THRESHOLD_PERCENT}% of benchmark.\n\nLatest: {latest_gross} CC"
+            print(f"ALERT 4 RETURNED TO BENCHMARK:\n{message}")
+            send_notification(
+                title="Canton: Gross Returned to Benchmark",
+                message=message,
+                priority=0,
+                alert_type="alert4"
+            )
+            set_alert_state("alert4", "normal")
+        else:
+            print(f"Alert 4: Gross within {ALERT4_THRESHOLD_PERCENT}% threshold")
         return False
 
 
@@ -700,6 +804,15 @@ def check_diff_change(metrics: dict) -> bool:
         else:
             details.append(f"vs {period} ({baseline_diff:+.2f} CC): {direction} {abs(pct_change):.1f}% ✓")
 
+    # Determine current state
+    current_state = "triggered" if alerts else "normal"
+    last_state = get_alert_state("alert5") if STATE_CHANGE_MODE else "normal"
+
+    # State-change mode: only notify on transitions
+    if STATE_CHANGE_MODE and current_state == last_state:
+        print(f"Alert 5: State unchanged ({current_state}), skipping notification")
+        return False
+
     if alerts:
         # Determine overall direction for narrative
         first_baseline_diff = None
@@ -734,9 +847,22 @@ def check_diff_change(metrics: dict) -> bool:
             priority=1,
             alert_type="alert5"
         )
+        set_alert_state("alert5", "triggered")
         return True
     else:
-        print(f"Alert 5: Diff within {ALERT5_THRESHOLD_PERCENT}% threshold")
+        # Check if returning to benchmark from triggered state
+        if STATE_CHANGE_MODE and last_state == "triggered":
+            message = f"Profitability back within {ALERT5_THRESHOLD_PERCENT}% of benchmark.\n\nLatest Diff: {latest_diff:+.2f} CC\n(Gross {latest_gross} - Est.Traffic {latest_est})"
+            print(f"ALERT 5 RETURNED TO BENCHMARK:\n{message}")
+            send_notification(
+                title="Canton: Profitability Returned to Benchmark",
+                message=message,
+                priority=0,
+                alert_type="alert5"
+            )
+            set_alert_state("alert5", "normal")
+        else:
+            print(f"Alert 5: Diff within {ALERT5_THRESHOLD_PERCENT}% threshold")
         return False
 
 

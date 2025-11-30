@@ -85,6 +85,94 @@ Canton Status Report
 
 ---
 
+### Alert 3: Est.Traffic Change
+
+**Purpose:** Detect significant spikes or drops in network traffic
+
+**Trigger:** Est.Traffic changes by more than threshold % vs comparison period
+
+**Scope:** Compares Latest Round against 1-Hour Average (configurable)
+
+**Priority:** High (priority=1 for Pushover)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALERT3_ENABLED` | `true` | Enable/disable |
+| `ALERT3_THRESHOLD_PERCENT` | `30` | % change to trigger alert |
+| `ALERT3_COMPARISON_PERIOD` | `1hr` | Compare against: `1hr`, `24hr`, or `both` |
+
+**Example Notification:**
+```
+Canton: Est.Traffic Change >30%!
+
+Network traffic is spiking - more transactions flowing through.
+
+Latest: 15.5 CC
+
+vs 1-Hour Average: ↑ 35.2% ⚠️
+```
+
+---
+
+### Alert 4: Gross Change
+
+**Purpose:** Detect significant spikes or drops in gross revenue
+
+**Trigger:** Gross changes by more than threshold % vs comparison period
+
+**Scope:** Compares Latest Round against 1-Hour Average (configurable)
+
+**Priority:** High (priority=1 for Pushover)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALERT4_ENABLED` | `true` | Enable/disable |
+| `ALERT4_THRESHOLD_PERCENT` | `30` | % change to trigger alert |
+| `ALERT4_COMPARISON_PERIOD` | `1hr` | Compare against: `1hr`, `24hr`, or `both` |
+
+**Example Notification:**
+```
+Canton: Gross Change >30%!
+
+Gross revenue is down - earning less per round.
+
+Latest: 10.2 CC
+
+vs 1-Hour Average: ↓ 42.1% ⚠️
+```
+
+---
+
+### Alert 5: Profitability (Diff) Change
+
+**Purpose:** Detect significant changes in the margin between Gross and Est.Traffic
+
+**Trigger:** Diff (Gross - Est.Traffic) changes by more than threshold % vs comparison period
+
+**Scope:** Compares Latest Round against 1-Hour Average (configurable)
+
+**Priority:** High (priority=1 for Pushover)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALERT5_ENABLED` | `true` | Enable/disable |
+| `ALERT5_THRESHOLD_PERCENT` | `30` | % change to trigger alert |
+| `ALERT5_COMPARISON_PERIOD` | `1hr` | Compare against: `1hr`, `24hr`, or `both` |
+
+**Example Notification:**
+```
+Canton: Profitability Change >30%!
+
+Profitability declining - margin between Gross and Traffic is shrinking.
+
+Latest Diff: +2.50 CC
+(Gross 12.5 - Est.Traffic 10.0)
+
+vs 1-Hour Average (+5.20 CC): ↓ 51.9% ⚠️
+```
+
+---
+
 ### Startup Notification
 
 **Purpose:** Confirm successful deployment and show active configuration
@@ -101,6 +189,44 @@ Running on Railway.
 • Threshold alerts: every 15 mins
 • Status reports: every 60 mins
 ```
+
+---
+
+## State-Change Mode (Noise Reduction)
+
+Alerts 3, 4, and 5 support **state-change mode** to reduce notification noise. Instead of firing every time the condition is met, alerts only fire on **state transitions**.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STATE_CHANGE_MODE` | `true` | Only notify on state changes |
+
+**How it works:**
+
+| Transition | Notification |
+|------------|--------------|
+| normal → triggered | Alert fires (e.g., "Est.Traffic Change >30%!") |
+| triggered → triggered | Silence (no repeat notifications) |
+| triggered → normal | "Returned to Benchmark" notification |
+| normal → normal | Silence |
+
+**Example "Returned to Benchmark" Notification:**
+```
+Canton: Est.Traffic Returned to Benchmark
+
+Est.Traffic back within 30% of benchmark.
+
+Latest: 11.2 CC
+```
+
+**Database:** State is stored in the `alert_state` table (created automatically):
+
+| alert_type | last_state | updated_at |
+|------------|------------|------------|
+| alert3 | triggered | 2025-11-30 10:15:00 |
+| alert4 | normal | 2025-11-30 10:15:00 |
+| alert5 | normal | 2025-11-30 09:45:00 |
+
+**To disable** (get alerts every check): Set `STATE_CHANGE_MODE=false`
 
 ---
 
@@ -342,8 +468,13 @@ ALERT2_EXCLUDE_USERS=
 | Feature | Status |
 |---------|--------|
 | Web scraping with Playwright | ✓ |
-| Threshold alerts (Est.Traffic > Gross) | ✓ |
-| Scheduled status reports | ✓ |
+| Alert 1: Threshold alerts (Est.Traffic > Gross) | ✓ |
+| Alert 2: Scheduled status reports | ✓ |
+| Alert 3: Est.Traffic % change detection | ✓ |
+| Alert 4: Gross % change detection | ✓ |
+| Alert 5: Profitability (Diff) % change detection | ✓ |
+| State-change mode (noise reduction) | ✓ |
+| "Returned to Benchmark" notifications | ✓ |
 | Pushover notifications | ✓ |
 | Slack channel notifications | ✓ |
 | Slack DM notifications | ✓ |
