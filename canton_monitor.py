@@ -1093,7 +1093,7 @@ def format_concentration_alert(instance_name: str, rule_results: list, any_trigg
 
     # Network total (same for all rules)
     network_total = rule_results[0]["network_total"]
-    message += f"Network Total: ${network_total:,.0f}\n\n"
+    message += f"Network Total: {network_total:,.0f} AppRewardCoupons\n\n"
 
     # Rule results
     for result in rule_results:
@@ -1118,7 +1118,7 @@ def format_concentration_alert(instance_name: str, rule_results: list, any_trigg
                 provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
                 percent = provider["percent_of_total"]
                 amount = provider["total_amount"]
-                message += f"   {i}. {provider_short}: {percent:.2f}% (${amount:,.0f})\n"
+                message += f"   {i}. {provider_short}: {percent:.2f}% ({amount:,.0f} ARC)\n"
 
         message += "\n"
 
@@ -1266,7 +1266,7 @@ def format_faam_status_report(faam_data: dict, show_top_x: list, breakdown_count
     except:
         message += f"Period: {time_window['from']} - {time_window['to']}\n"
 
-    message += f"Network Total: ${network_total:,.0f}\n\n"
+    message += f"Network Total: {network_total:,.0f} AppRewardCoupons\n\n"
 
     # Show concentration for each top X
     for top_x in sorted(show_top_x):
@@ -1285,7 +1285,7 @@ def format_faam_status_report(faam_data: dict, show_top_x: list, breakdown_count
             provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
             percent = provider["percent_of_total"]
             amount = provider["total_amount"]
-            message += f"{i}. {provider_short}: {percent:.2f}% (${amount:,.0f})\n"
+            message += f"{i}. {provider_short}: {percent:.2f}% ({amount:,.0f} ARC)\n"
 
     return message.strip()
 
