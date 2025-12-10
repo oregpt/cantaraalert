@@ -1114,11 +1114,9 @@ def format_concentration_alert(instance_name: str, rule_results: list, any_trigg
         # Provider breakdown (only if triggered and not too many)
         if triggered and len(result["providers"]) <= 5:
             for i, provider in enumerate(result["providers"], 1):
-                provider_id = provider["provider"]
-                provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
                 percent = provider["percent_of_total"]
                 amount = provider["total_amount"]
-                message += f"   {i}. {provider_short}: {percent:.2f}% ({amount:,.0f} ARC)\n"
+                message += f"   {i}. Provider #{i}: {percent:.2f}% ({amount:,.0f} ARC)\n"
 
         message += "\n"
 
@@ -1281,11 +1279,9 @@ def format_faam_status_report(faam_data: dict, show_top_x: list, breakdown_count
     if breakdown_providers:
         message += f"\nBreakdown (Top {len(breakdown_providers)}):\n"
         for i, provider in enumerate(breakdown_providers, 1):
-            provider_id = provider["provider"]
-            provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
             percent = provider["percent_of_total"]
             amount = provider["total_amount"]
-            message += f"{i}. {provider_short}: {percent:.2f}% ({amount:,.0f} ARC)\n"
+            message += f"{i}. Provider #{i}: {percent:.2f}% ({amount:,.0f} ARC)\n"
 
     return message.strip()
 
