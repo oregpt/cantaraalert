@@ -1170,7 +1170,7 @@ def run_alert6_instance(instance: dict):
 
             # Only alert if state changed
             if current_state != last_state:
-                update_alert_state(alert_type, current_state)
+                set_alert_state(alert_type, current_state)
 
                 # Format and send notification
                 message = format_concentration_alert(instance_name, rule_results, any_triggered)
