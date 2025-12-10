@@ -64,6 +64,36 @@ ALERT5_EXCLUDE_PUSHOVER = os.getenv("ALERT5_EXCLUDE_PUSHOVER", "false").lower() 
 # State-change mode: only fire alerts on state transitions (reduces noise)
 STATE_CHANGE_MODE = os.getenv("STATE_CHANGE_MODE", "true").lower() == "true"
 
+# Alert 6 config (FAAM Concentration Monitor)
+# Shared API configuration
+ALERT6_FAAMVIEW_API_KEY = os.getenv("ALERT6_FAAMVIEW_API_KEY")
+ALERT6_FAAMVIEW_API_URL = os.getenv("ALERT6_FAAMVIEW_API_URL", "https://faamview-backend-production.up.railway.app")
+
+# Load all enabled instances (supports 1-10)
+ALERT6_INSTANCES = []
+for instance_id in range(1, 11):
+    if os.getenv(f"ALERT6_{instance_id}_ENABLED", "false").lower() == "true":
+        ALERT6_INSTANCES.append({
+            "id": instance_id,
+            "name": os.getenv(f"ALERT6_{instance_id}_NAME", f"Instance {instance_id}"),
+            "rules": os.getenv(f"ALERT6_{instance_id}_RULES", "2:50"),  # Default: top 2 > 50%
+            "time_window_hours": int(os.getenv(f"ALERT6_{instance_id}_TIME_WINDOW_HOURS", "24")),
+            "interval_minutes": int(os.getenv(f"ALERT6_{instance_id}_INTERVAL_MINUTES", "360")),
+            "exclude_pushover": os.getenv(f"ALERT6_{instance_id}_EXCLUDE_PUSHOVER", "false").lower() == "true",
+            "exclude_channels": [c.strip() for c in os.getenv(f"ALERT6_{instance_id}_EXCLUDE_CHANNELS", "").split(",") if c.strip()],
+            "exclude_users": [u.strip() for u in os.getenv(f"ALERT6_{instance_id}_EXCLUDE_USERS", "").split(",") if u.strip()]
+        })
+
+# Alert 7 config (FAAM Status Reports)
+ALERT7_ENABLED = os.getenv("ALERT7_ENABLED", "false").lower() == "true"
+ALERT7_INTERVAL_MINUTES = int(os.getenv("ALERT7_INTERVAL_MINUTES", "60"))
+ALERT7_TIME_WINDOW_HOURS = int(os.getenv("ALERT7_TIME_WINDOW_HOURS", "1"))
+ALERT7_SHOW_TOP_X = [int(x.strip()) for x in os.getenv("ALERT7_SHOW_TOP_X", "5,10,20").split(",") if x.strip()]
+ALERT7_BREAKDOWN_COUNT = int(os.getenv("ALERT7_BREAKDOWN_COUNT", "5"))
+ALERT7_EXCLUDE_CHANNELS = [c.strip() for c in os.getenv("ALERT7_EXCLUDE_CHANNELS", "").split(",") if c.strip()]
+ALERT7_EXCLUDE_USERS = [u.strip() for u in os.getenv("ALERT7_EXCLUDE_USERS", "").split(",") if u.strip()]
+ALERT7_EXCLUDE_PUSHOVER = os.getenv("ALERT7_EXCLUDE_PUSHOVER", "true").lower() == "true"
+
 CANTON_URL = "https://canton-rewards.noves.fi/"
 
 
@@ -128,12 +158,13 @@ def send_slack(title: str, message: str, exclude_channels: list = None, exclude_
     return responses
 
 
-def send_notification(title: str, message: str, priority: int = 1, alert_type: str = None):
+def send_notification(title: str, message: str, priority: int = 1, alert_type: str = None, alert6_instance: dict = None):
     """Send notification to all enabled channels (Pushover + Slack) with per-alert exclusions
 
     alert_type: 'alert1' for threshold alerts, 'alert2' for status reports,
                 'alert3' for Est.Traffic change, 'alert4' for Gross change,
-                'alert5' for Diff change, None for all
+                'alert5' for Diff change, 'alert6_1', 'alert6_2', etc. for FAAM instances, None for all
+    alert6_instance: For Alert 6, pass the instance config dict directly
     """
     # Determine exclusions based on alert type
     exclude_pushover = False
@@ -160,6 +191,15 @@ def send_notification(title: str, message: str, priority: int = 1, alert_type: s
         exclude_pushover = ALERT5_EXCLUDE_PUSHOVER
         exclude_channels = ALERT5_EXCLUDE_CHANNELS
         exclude_users = ALERT5_EXCLUDE_USERS
+    elif alert_type and alert_type.startswith("alert6_") and alert6_instance:
+        # Alert 6 instances: use exclusions from instance config
+        exclude_pushover = alert6_instance.get("exclude_pushover", False)
+        exclude_channels = alert6_instance.get("exclude_channels", [])
+        exclude_users = alert6_instance.get("exclude_users", [])
+    elif alert_type == "alert7":
+        exclude_pushover = ALERT7_EXCLUDE_PUSHOVER
+        exclude_channels = ALERT7_EXCLUDE_CHANNELS
+        exclude_users = ALERT7_EXCLUDE_USERS
 
     # Send to Pushover (unless excluded)
     if not exclude_pushover:
@@ -894,6 +934,412 @@ def run_check(is_startup: bool = False):
     metrics = parse_metrics(raw_text)
     store_metrics_to_db(metrics)  # Fire-and-forget DB storage
     return check_and_alert(metrics, is_startup=is_startup)
+
+
+# ============================================
+# ALERT 6: FAAM CONCENTRATION MONITOR
+# ============================================
+
+def parse_concentration_rules(rules_string: str) -> list:
+    """Parse concentration rules from config string
+
+    Format: "2:50,3:60,5:75" → [(2, 50.0), (3, 60.0), (5, 75.0)]
+
+    Returns:
+        List of tuples: [(top_x, threshold_percent), ...]
+    """
+    try:
+        parsed_rules = []
+        for rule in rules_string.split(","):
+            rule = rule.strip()
+            if not rule:
+                continue
+            parts = rule.split(":")
+            if len(parts) == 2:
+                top_x = int(parts[0].strip())
+                threshold = float(parts[1].strip())
+                parsed_rules.append((top_x, threshold))
+        return parsed_rules
+    except Exception as e:
+        print(f"Failed to parse concentration rules '{rules_string}': {e}")
+        return [(2, 50.0)]  # Default fallback
+
+
+def fetch_faam_stats(top_x: int, window_hours: int) -> dict:
+    """Fetch provider concentration data from FAAMView API
+
+    Args:
+        top_x: Number of top providers to fetch
+        window_hours: Time window in hours
+
+    Returns:
+        {
+            "providers": [{"provider": str, "percent_of_total": float, ...}, ...],
+            "network_total": float,
+            "time_window": {"from": str, "to": str}
+        }
+        Returns None on failure
+    """
+    try:
+        from datetime import timedelta
+
+        # Calculate rolling window
+        now = datetime.now(timezone.utc)
+        from_time = now - timedelta(hours=window_hours)
+
+        # Build API request
+        url = f"{ALERT6_FAAMVIEW_API_URL}/api/v1/stats"
+        params = {
+            "limit": top_x,
+            "from": from_time.isoformat(),
+            "to": now.isoformat()
+        }
+        headers = {"X-API-Key": ALERT6_FAAMVIEW_API_KEY}
+
+        # Make request
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract relevant data
+        return {
+            "providers": data["data"],
+            "network_total": data["meta"]["network_total"],
+            "time_window": {
+                "from": data["meta"]["filters"]["from"],
+                "to": data["meta"]["filters"]["to"]
+            }
+        }
+
+    except Exception as e:
+        print(f"Failed to fetch FAAM stats: {e}")
+        return None
+
+
+def check_concentration_rules(faam_data: dict, rules: list) -> list:
+    """Check all concentration rules and return results
+
+    Args:
+        faam_data: Data from fetch_faam_stats()
+        rules: List of (top_x, threshold) tuples
+
+    Returns:
+        List of rule results:
+        [{
+            "top_x": int,
+            "threshold": float,
+            "concentration": float,
+            "triggered": bool,
+            "providers": list
+        }, ...]
+    """
+    if not faam_data or not faam_data.get("providers"):
+        return []
+
+    results = []
+    all_providers = faam_data["providers"]
+
+    for (top_x, threshold) in rules:
+        # Get top X providers
+        providers = all_providers[:top_x]
+
+        # Calculate concentration
+        concentration = sum(p["percent_of_total"] for p in providers)
+
+        # Check threshold
+        triggered = concentration > threshold
+
+        results.append({
+            "top_x": top_x,
+            "threshold": threshold,
+            "concentration": concentration,
+            "triggered": triggered,
+            "providers": providers,
+            "network_total": faam_data["network_total"],
+            "time_window": faam_data["time_window"]
+        })
+
+    return results
+
+
+def format_concentration_alert(instance_name: str, rule_results: list, any_triggered: bool) -> str:
+    """Format multi-rule concentration alert message
+
+    Args:
+        instance_name: Name of the alert instance
+        rule_results: Results from check_concentration_rules()
+        any_triggered: Whether any rule was triggered
+
+    Returns:
+        Formatted notification message
+    """
+    if not rule_results:
+        return "No concentration data available"
+
+    # Header
+    if any_triggered:
+        message = f"{instance_name}: Concentration Alert!\n\n"
+    else:
+        message = f"{instance_name}: Returned to Normal\n\n"
+
+    # Time window (same for all rules)
+    time_window = rule_results[0]["time_window"]
+    try:
+        from_time = datetime.fromisoformat(time_window["from"].replace('Z', '+00:00'))
+        to_time = datetime.fromisoformat(time_window["to"].replace('Z', '+00:00'))
+        message += f"Period: {from_time.strftime('%b %d, %H:%M')} - {to_time.strftime('%b %d, %H:%M')} UTC\n"
+    except:
+        message += f"Period: {time_window['from']} - {time_window['to']}\n"
+
+    # Network total (same for all rules)
+    network_total = rule_results[0]["network_total"]
+    message += f"Network Total: ${network_total:,.0f}\n\n"
+
+    # Rule results
+    for result in rule_results:
+        top_x = result["top_x"]
+        threshold = result["threshold"]
+        concentration = result["concentration"]
+        triggered = result["triggered"]
+
+        # Status indicator
+        status = "⚠️" if triggered else "✓"
+
+        message += f"{status} Top {top_x}: {concentration:.2f}% "
+        if triggered:
+            message += f"> {threshold}% threshold\n"
+        else:
+            message += f"< {threshold}% threshold\n"
+
+        # Provider breakdown (only if triggered and not too many)
+        if triggered and len(result["providers"]) <= 5:
+            for i, provider in enumerate(result["providers"], 1):
+                provider_id = provider["provider"]
+                provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
+                percent = provider["percent_of_total"]
+                amount = provider["total_amount"]
+                message += f"   {i}. {provider_short}: {percent:.2f}% (${amount:,.0f})\n"
+
+        message += "\n"
+
+    return message.strip()
+
+
+def run_alert6_instance(instance: dict):
+    """Run Alert 6 for a specific instance
+
+    Args:
+        instance: Instance configuration dict
+    """
+    instance_id = instance["id"]
+    instance_name = instance["name"]
+    alert_type = f"alert6_{instance_id}"
+
+    print(f"Alert 6.{instance_id} ({instance_name}): Checking...")
+
+    try:
+        # Parse rules
+        rules = parse_concentration_rules(instance["rules"])
+        if not rules:
+            print(f"Alert 6.{instance_id}: No valid rules configured")
+            return
+
+        # Get max top_x needed (to minimize API calls)
+        max_top_x = max(rule[0] for rule in rules)
+
+        # Fetch data
+        faam_data = fetch_faam_stats(
+            top_x=max_top_x,
+            window_hours=instance["time_window_hours"]
+        )
+
+        if not faam_data:
+            print(f"Alert 6.{instance_id}: Failed to fetch data")
+            return
+
+        # Check all rules
+        rule_results = check_concentration_rules(faam_data, rules)
+
+        # Determine if any rule triggered
+        any_triggered = any(r["triggered"] for r in rule_results)
+
+        # State-change mode
+        if STATE_CHANGE_MODE:
+            last_state = get_alert_state(alert_type)
+            current_state = "triggered" if any_triggered else "normal"
+
+            # Only alert if state changed
+            if current_state != last_state:
+                update_alert_state(alert_type, current_state)
+
+                # Format and send notification
+                message = format_concentration_alert(instance_name, rule_results, any_triggered)
+
+                if current_state == "triggered":
+                    title = f"Canton: {instance_name} Alert!"
+                    priority = 1
+                else:
+                    title = f"Canton: {instance_name} Resolved"
+                    priority = 0
+
+                send_notification(
+                    title=title,
+                    message=message,
+                    priority=priority,
+                    alert_type=alert_type,
+                    alert6_instance=instance
+                )
+                print(f"Alert 6.{instance_id}: State changed to {current_state} - notification sent")
+            else:
+                print(f"Alert 6.{instance_id}: No state change ({current_state}) - no notification")
+
+        else:
+            # No state-change mode: alert every time triggered
+            if any_triggered:
+                message = format_concentration_alert(instance_name, rule_results, any_triggered)
+                title = f"Canton: {instance_name} Alert!"
+
+                send_notification(
+                    title=title,
+                    message=message,
+                    priority=1,
+                    alert_type=alert_type,
+                    alert6_instance=instance
+                )
+                print(f"Alert 6.{instance_id}: Triggered - notification sent")
+            else:
+                print(f"Alert 6.{instance_id}: All rules within thresholds - no alert")
+
+    except Exception as e:
+        print(f"Alert 6.{instance_id} failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_alert6():
+    """Run Alert 6: FAAM Concentration Monitor for all enabled instances"""
+    if not ALERT6_FAAMVIEW_API_KEY:
+        print("Alert 6: No API key configured (ALERT6_FAAMVIEW_API_KEY)")
+        return
+
+    if not ALERT6_INSTANCES:
+        print("Alert 6: No instances enabled")
+        return
+
+    print(f"Alert 6: Running {len(ALERT6_INSTANCES)} instance(s)...")
+
+    for instance in ALERT6_INSTANCES:
+        run_alert6_instance(instance)
+
+
+# ============================================
+# ALERT 7: FAAM STATUS REPORTS
+# ============================================
+
+def format_faam_status_report(faam_data: dict, show_top_x: list, breakdown_count: int, time_window_hours: int) -> str:
+    """Format FAAM concentration status report
+
+    Args:
+        faam_data: Data from fetch_faam_stats()
+        show_top_x: List of top X values to show (e.g., [5, 10, 20])
+        breakdown_count: Number of providers to show in breakdown
+        time_window_hours: Time window for the report
+
+    Returns:
+        Formatted status report message
+    """
+    if not faam_data or not faam_data.get("providers"):
+        return "No FAAM data available for this period"
+
+    providers = faam_data["providers"]
+    network_total = faam_data["network_total"]
+    time_window = faam_data["time_window"]
+
+    # Header
+    message = "FAAM Concentration Report\n\n"
+
+    # Time window
+    try:
+        from_time = datetime.fromisoformat(time_window["from"].replace('Z', '+00:00'))
+        to_time = datetime.fromisoformat(time_window["to"].replace('Z', '+00:00'))
+        message += f"Period: {from_time.strftime('%b %d, %H:%M')} - {to_time.strftime('%b %d, %H:%M')} UTC ({time_window_hours}h window)\n"
+    except:
+        message += f"Period: {time_window['from']} - {time_window['to']}\n"
+
+    message += f"Network Total: ${network_total:,.0f}\n\n"
+
+    # Show concentration for each top X
+    for top_x in sorted(show_top_x):
+        if top_x <= len(providers):
+            concentration = sum(p["percent_of_total"] for p in providers[:top_x])
+            message += f"Top {top_x:2d}: {concentration:6.2f}%\n"
+        else:
+            message += f"Top {top_x:2d}: N/A (only {len(providers)} providers)\n"
+
+    # Breakdown
+    breakdown_providers = providers[:min(breakdown_count, len(providers))]
+    if breakdown_providers:
+        message += f"\nBreakdown (Top {len(breakdown_providers)}):\n"
+        for i, provider in enumerate(breakdown_providers, 1):
+            provider_id = provider["provider"]
+            provider_short = provider_id.split("::")[0] if "::" in provider_id else provider_id[:20]
+            percent = provider["percent_of_total"]
+            amount = provider["total_amount"]
+            message += f"{i}. {provider_short}: {percent:.2f}% (${amount:,.0f})\n"
+
+    return message.strip()
+
+
+def run_alert7():
+    """Run Alert 7: FAAM Status Reports
+
+    Sends scheduled concentration reports regardless of thresholds.
+    Shows "what's happening" vs Alert 6 "what's wrong".
+    """
+    if not ALERT7_ENABLED:
+        return
+
+    if not ALERT6_FAAMVIEW_API_KEY:
+        print("Alert 7: No API key configured (ALERT6_FAAMVIEW_API_KEY)")
+        return
+
+    print("Alert 7: Generating FAAM status report...")
+
+    try:
+        # Fetch data (use max of show_top_x to get enough providers)
+        max_top_x = max(ALERT7_SHOW_TOP_X) if ALERT7_SHOW_TOP_X else 20
+
+        faam_data = fetch_faam_stats(
+            top_x=max_top_x,
+            window_hours=ALERT7_TIME_WINDOW_HOURS
+        )
+
+        if not faam_data:
+            print("Alert 7: Failed to fetch data")
+            return
+
+        # Format report
+        message = format_faam_status_report(
+            faam_data=faam_data,
+            show_top_x=ALERT7_SHOW_TOP_X,
+            breakdown_count=ALERT7_BREAKDOWN_COUNT,
+            time_window_hours=ALERT7_TIME_WINDOW_HOURS
+        )
+
+        # Send notification (low priority, informational)
+        send_notification(
+            title="Canton: FAAM Concentration Report",
+            message=message,
+            priority=0,  # Low priority for reports
+            alert_type="alert7"
+        )
+
+        print("Alert 7: Report sent")
+
+    except Exception as e:
+        print(f"Alert 7 failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

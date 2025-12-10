@@ -17,7 +17,9 @@ from canton_monitor import (
     scrape_canton_rewards, parse_metrics, DATABASE_URL, DB_ENABLED,
     ALERT3_ENABLED, ALERT3_THRESHOLD_PERCENT, ALERT3_COMPARISON_PERIOD,
     ALERT4_ENABLED, ALERT4_THRESHOLD_PERCENT, ALERT4_COMPARISON_PERIOD,
-    ALERT5_ENABLED, ALERT5_THRESHOLD_PERCENT, ALERT5_COMPARISON_PERIOD
+    ALERT5_ENABLED, ALERT5_THRESHOLD_PERCENT, ALERT5_COMPARISON_PERIOD,
+    run_alert6, ALERT6_INSTANCES,
+    run_alert7, ALERT7_ENABLED, ALERT7_INTERVAL_MINUTES
 )
 
 load_dotenv()
@@ -510,6 +512,40 @@ def change_alerts_job():
         )
 
 
+def alert6_job():
+    """Alert 6: Check FAAM concentration across all enabled instances"""
+    print(f"\n{'='*50}")
+    print("Running Alert 6 (FAAM Concentration Monitor)...")
+    print(f"{'='*50}")
+    try:
+        run_alert6()
+    except Exception as e:
+        error_msg = f"Error during Alert 6: {e}"
+        print(error_msg)
+        send_notification(
+            title="Canton Monitor ERROR",
+            message=error_msg,
+            priority=1
+        )
+
+
+def alert7_job():
+    """Alert 7: FAAM Status Reports"""
+    print(f"\n{'='*50}")
+    print("Running Alert 7 (FAAM Status Reports)...")
+    print(f"{'='*50}")
+    try:
+        run_alert7()
+    except Exception as e:
+        error_msg = f"Error during Alert 7: {e}"
+        print(error_msg)
+        send_notification(
+            title="Canton Monitor ERROR",
+            message=error_msg,
+            priority=1
+        )
+
+
 if __name__ == "__main__":
     # Start API server in background thread (includes health check)
     api_thread = threading.Thread(target=start_api_server, daemon=True)
@@ -528,6 +564,14 @@ if __name__ == "__main__":
     if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
         print(f"Change alerts interval: every {CHANGE_ALERTS_INTERVAL_MINUTES} mins")
 
+    # Alert 6: Print each enabled instance
+    if ALERT6_INSTANCES:
+        print(f"Alert 6 (FAAM Concentration): {len(ALERT6_INSTANCES)} instance(s) ENABLED")
+        for instance in ALERT6_INSTANCES:
+            print(f"  Instance {instance['id']} ({instance['name']}): Rules={instance['rules']}, every {instance['interval_minutes']} mins")
+
+    print(f"Alert 7 (FAAM Reports):  {'ENABLED' if ALERT7_ENABLED else 'DISABLED'} - every {ALERT7_INTERVAL_MINUTES} mins")
+
     # Build startup message
     config_lines = []
     if ALERT1_ENABLED:
@@ -540,6 +584,12 @@ if __name__ == "__main__":
         config_lines.append(f"• Gross change: >{ALERT4_THRESHOLD_PERCENT}% vs {ALERT4_COMPARISON_PERIOD}")
     if ALERT5_ENABLED:
         config_lines.append(f"• Diff change: >{ALERT5_THRESHOLD_PERCENT}% vs {ALERT5_COMPARISON_PERIOD}")
+    if ALERT6_INSTANCES:
+        config_lines.append(f"• FAAM Concentration: {len(ALERT6_INSTANCES)} instance(s)")
+        for instance in ALERT6_INSTANCES:
+            config_lines.append(f"  - {instance['name']}: Rules={instance['rules']}, every {instance['interval_minutes']} mins")
+    if ALERT7_ENABLED:
+        config_lines.append(f"• FAAM Reports: every {ALERT7_INTERVAL_MINUTES} mins")
     if not config_lines:
         config_lines.append("• No alerts enabled!")
 
@@ -572,6 +622,14 @@ if __name__ == "__main__":
     if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
         change_alerts_job()
 
+    # Run Alert 6 on startup if any instances are enabled
+    if ALERT6_INSTANCES:
+        alert6_job()
+
+    # Run Alert 7 on startup if enabled
+    if ALERT7_ENABLED:
+        alert7_job()
+
     # Schedule recurring checks
     if ALERT1_ENABLED:
         schedule.every(ALERT1_INTERVAL_MINUTES).minutes.do(threshold_check_job)
@@ -582,6 +640,25 @@ if __name__ == "__main__":
     # Schedule change alerts if any are enabled (they share an interval)
     if ALERT3_ENABLED or ALERT4_ENABLED or ALERT5_ENABLED:
         schedule.every(CHANGE_ALERTS_INTERVAL_MINUTES).minutes.do(change_alerts_job)
+
+    # Schedule Alert 6 instances (each instance can have its own interval)
+    if ALERT6_INSTANCES:
+        # Group instances by interval to avoid duplicate schedules
+        interval_groups = {}
+        for instance in ALERT6_INSTANCES:
+            interval = instance['interval_minutes']
+            if interval not in interval_groups:
+                interval_groups[interval] = []
+            interval_groups[interval].append(instance)
+
+        # Schedule one job per unique interval
+        for interval in interval_groups:
+            schedule.every(interval).minutes.do(alert6_job)
+            print(f"Scheduled Alert 6: every {interval} mins ({len(interval_groups[interval])} instance(s))")
+
+    # Schedule Alert 7 (FAAM Status Reports)
+    if ALERT7_ENABLED:
+        schedule.every(ALERT7_INTERVAL_MINUTES).minutes.do(alert7_job)
 
     print("Scheduler running. Next jobs:", schedule.get_jobs())
 
